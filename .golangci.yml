@@ -21,7 +21,7 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(cmd/main.go)
+        - prefix(github.com/Nikolay-Yakunin/gouge)
 
 linters:
   disable-all: true
