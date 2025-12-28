@@ -47,6 +47,8 @@ release: clean build
 	done
 	@echo "Release $(VERSION) created in $(BUILD_DIR)/dist"
 
+lint:
+	golangci-lint run
 
 clean:
 	rm -rf $(BUILD_DIR)
