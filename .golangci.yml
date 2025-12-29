@@ -2,46 +2,40 @@ version: "2"
 
 run:
   timeout: 5m
-  issues-exit-code: 1
   tests: true
-  relative-path-mode: cfg 
+  modules-download-mode: readonly
+  go: '1.25'
 
 output:
-  format: colored-line-number
-  print-issued-lines: true
-  print-linter-name: true
-
-formatters:
-  enable:
-    - gci
-    - gofmt
-    - gofumpt
-  settings:
-    gci:
-      sections:
-        - standard
-        - default
-        - prefix(cmd/main.go)
+  formats:
+    text:
+      path: stdout
+      colors: true
+  show-stats: true
 
 linters:
-  disable-all: true
   enable:
     - errcheck
     - govet
     - ineffassign
     - staticcheck
     - unused
-    
     - gosec
     - copyloopvar
     - wrapcheck
     - revive
 
+formatters:
+  enable:
+    - gci
+    - gofumpt
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/nikolay/gouge)
+
 issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
-        - gosec
   max-issues-per-linter: 0
   max-same-issues: 0
