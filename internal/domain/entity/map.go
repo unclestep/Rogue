@@ -78,7 +78,7 @@ func (m *Map) IsWalkable(pos geometry.Point) bool {
 	if !m.InBounds(pos) {
 		return false
 	}
-	return m.tiles[pos.Y][pos.X].Type == Floor || m.tiles[pos.Y][pos.X].Type == Corridor || m.tiles[pos.Y][pos.X].Type == Door
+	return m.tiles[pos.Y][pos.X].Type == Floor || m.tiles[pos.Y][pos.X].Type == Corridor || m.tiles[pos.Y][pos.X].Type == Door || m.tiles[pos.Y][pos.X].Type == Exit
 }
 
 func (m *Map) GetActorID(pos geometry.Point) (int, bool) {
