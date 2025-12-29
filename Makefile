@@ -21,10 +21,13 @@ LDFLAGS=-ldflags="-s -w"
 
 .PHONY: all build release clean run
 
-all: 
+all: fmt lint test build
 
 run:
 	$(CC) run $(CMD)
+
+test:
+	$(CC) test ./... 
 
 build: $(PLATFORMS)
 
@@ -49,6 +52,9 @@ release: clean build
 
 lint:
 	golangci-lint run
+
+fmt:
+	golangci-lint fmt
 
 clean:
 	rm -rf $(BUILD_DIR)
