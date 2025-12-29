@@ -1,6 +1,7 @@
 package items_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/Nikolay-Yakunin/gouge/internal/domain/entity"
@@ -46,12 +47,27 @@ func TestFoodObjectSetters(t *testing.T) {
 
 func TestGenerateFood(t *testing.T) {
 	food := entity.GenerateFood(500)
-	if food.ToRegen < 5 || food.ToRegen > 100 {
-		t.Errorf("Expected ToRegen between 5 and 100, got %d", food.ToRegen)
+	if food.ToRegen < 1 || food.ToRegen > 100 {
+		t.Errorf("Expected ToRegen between 1 and 100, got %d", food.ToRegen)
 	}
 	if food.Name == "" {
 		t.Error("Expected non-empty Name")
 	}
+}
+
+func TestGenerateFoodPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("Expected panic when no food names are available")
+		}
+	}()
+
+	// Сохраняем оригинальный слайс имен еды и очищаем его для теста.
+	originalNames := entity.FoodNames
+	entity.FoodNames = []string{}
+	defer func() { entity.FoodNames = originalNames }()
+
+	_ = entity.GenerateFood(500)
 }
 
 func TestGenerateFoodObject(t *testing.T) {
@@ -61,5 +77,39 @@ func TestGenerateFoodObject(t *testing.T) {
 	}
 	if foodObj.Size.X != 2 || foodObj.Size.Y != 3 {
 		t.Errorf("Expected Size (2,3), got (%d,%d)", foodObj.Size.X, foodObj.Size.Y)
+	}
+}
+
+func TestFoodString(t *testing.T) {
+	food := entity.NewFood("Apple", 15)
+	expected := "Apple (Regen: " + string(rune(15)) + ")"
+	if food.String() != expected {
+		t.Errorf("Expected %s, got %s", expected, food.String())
+	}
+}
+
+func TestFoodObjectString(t *testing.T) {
+	foodObj := entity.NewFoodObject(1, 2, 3, 4, 15, "Banana")
+	expected := "Banana (Regen: " + string(rune(15)) + ") at Object{Pos: [1, 2], Size: [3, 4]}"
+	if foodObj.String() != expected {
+		t.Errorf("Expected %s, got %s", expected, foodObj.String())
+	}
+}
+
+func TestFoodStringSprintf(t *testing.T) {
+	food := entity.NewFood("Orange", 25)
+	expected := food.String()
+	result := fmt.Sprintf("%v", food)
+	if result != expected {
+		t.Errorf("Expected %s, got %s", expected, result)
+	}
+}
+
+func TestFoodObjectStringSprintf(t *testing.T) {
+	foodObj := entity.NewFoodObject(2, 3, 4, 5, 30, "Grapes")
+	expected := foodObj.String()
+	result := fmt.Sprintf("%v", foodObj)
+	if result != expected {
+		t.Errorf("Expected %s, got %s", expected, result)
 	}
 }

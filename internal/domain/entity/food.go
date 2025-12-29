@@ -48,10 +48,16 @@ func NewFood(name string, toRegen int) *Food {
 }
 
 // GenerateFood - генерация еды.
+// Может передавать Слайс с именами?
 func GenerateFood(maxHealth int) *Food {
 	// Рандомное имя из слайса FoodNames.
+	// Паника если нет имен.
+	namesLen := len(FoodNames)
+	if namesLen == 0 {
+		panic("No food names data")
+	}
 	// #nosec G404
-	name := FoodNames[rand.IntN(len(FoodNames))]
+	name := FoodNames[rand.IntN(namesLen)]
 	// Рандомный максимальный реген на основе максимального здоровья персонажа и защита от отрицательных значений?.
 	maxRegen := max(maxHealth*MaxFoodRegenPercent/100, 1)
 	// Рандомное количество регена от 1 до maxRegen.
@@ -99,4 +105,9 @@ func NewFoodObject(x, y, sizeX, sizeY, toRegen int, name string) *FoodObject {
 func GenerateFoodObject(x, y, sizeX, sizeY, maxHealth int) *FoodObject {
 	food := GenerateFood(maxHealth)
 	return NewFoodObject(x, y, sizeX, sizeY, food.ToRegen, food.Name)
+}
+
+// String - строковое представление обьекта еды.
+func (fo *FoodObject) String() string {
+	return fo.Food.String() + " at " + fo.Object.String()
 }
