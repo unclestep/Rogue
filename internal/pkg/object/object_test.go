@@ -1,6 +1,9 @@
 package object
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 // Тупые проверки
 func TestConstructor(t *testing.T) {
@@ -29,7 +32,7 @@ func TestSetters(t *testing.T) {
 	}
 }
 
-func TestString(t *testing.T) {
+func TestObjectString(t *testing.T) {
 	obj := New(1, 2, 3, 4)
 	expected := "Object{Pos: [1, 2], Size: [3, 4]}"
 	result := obj.String()
@@ -42,6 +45,24 @@ func TestCoordsString(t *testing.T) {
 	coords := Coords{X: 5, Y: 6}
 	expected := "[5, 6]"
 	result := coords.String()
+	if result != expected {
+		t.Errorf("Expected %s, got %s", expected, result)
+	}
+}
+
+func TestObjectStringSprintf(t *testing.T) {
+	obj := New(1, 2, 3, 4)
+	expected := obj.String()
+	result := fmt.Sprintf("%v", obj)
+	if result != expected {
+		t.Errorf("Expected %s, got %s", expected, result)
+	}
+}
+
+func TestCoordsStringSprintf(t *testing.T) {
+	coords := Coords{X: 5, Y: 6}
+	expected := coords.String()
+	result := fmt.Sprintf("%v", coords)
 	if result != expected {
 		t.Errorf("Expected %s, got %s", expected, result)
 	}
