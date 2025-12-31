@@ -1,36 +1,31 @@
-// Package entity содержит сущности, используемые в доменной логике приложения.
-// - map - сущность карты игрового мира, содержащая информацию о тайлах, акторах и предметах на карте.
+// Map stores information about game landscape, actors and items
 package entity
 
 import (
+	"github.com/Nikolay-Yakunin/gouge/internal/pkg/algorithm"
 	"github.com/Nikolay-Yakunin/gouge/internal/pkg/geometry"
 	"log"
 	"math/rand"
+	"strings"
 )
 
-// Map - сущность карты игрового мира.
-// - width, height - размеры карты.
-// - tiles - двумерный слайс ячеек карты.
-// - actorGrid - двумерный слайс идентификаторов акторов на карте.
-// - itemGrid - двумерный слайс идентификаторов предметов на карте.
-// - entrance - координаты входа на карту.
-// - exit - координаты выхода с карты.
+// DATA STRUCTURES
 type Map struct {
-	width, height int
-	tiles         [][]Cell
-	actorGrid     [][]int
-	itemGrid      [][]int
-	entrancePoint geometry.Point
-	exitPoint     geometry.Point
-	rooms         []*Room
-	entranceRoom  *Room
-	exitRoom      *Room
+	width, height int            // Cols and rows
+	tiles         [][]Cell       // Layer 1: Game landscape
+	actorGrid     [][]int        // Layer 2: Location of actors
+	itemGrid      [][]int        // Layer 3: Location of items
+	entrancePoint geometry.Point // Spawn point
+	exitPoint     geometry.Point // End of level point
+	rooms         []*Room        // Pointers to all level rooms
+	entranceRoom  *Room          // Pointer to room with spawn point
+	exitRoom      *Room          // Pointer to room with exit point
+	rndm          *rand.Rand     // Local random generator (for representative tests)
+	seed          int64          // Seed of local random generator
 }
 
-// TileType - тип кода тайла на карте.
 type TileType int
 
-// Определение типов тайлов.
 const (
 	Empty TileType = iota
 	Wall
@@ -40,17 +35,14 @@ const (
 	Exit
 )
 
-// VisibilityState - тип кода видимости тайла на карте.
 type VisibilityState int
 
-// Определение состояний видимости.
 const (
 	Unexplored VisibilityState = iota
 	Explored
 	Visible
 )
 
-// Cell - структура ячейки карты, содержащая тип тайла и состояние видимости.
 type Cell struct {
 	Type       TileType
 	Visibility VisibilityState
@@ -76,9 +68,45 @@ const (
 )
 
 // API
-// NewCustomMap - конструктор карты.
+
+func (m *Map) String() string {
+	var sb strings.Builder
+
+	for row := range m.tiles {
+		for col := range m.tiles[row] {
+			var ch byte
+			tile := m.tiles[row][col].Type
+
+			switch tile {
+			case Wall:
+				ch = '#'
+			case Floor:
+				ch = '.'
+			case Door:
+				ch = '+'
+			case Corridor:
+				ch = '*'
+			case Exit:
+				ch = 'E'
+			default:
+				ch = ' '
+			}
+
+			if row == m.entrancePoint.Y && col == m.entrancePoint.X {
+				ch = 'S'
+			}
+
+			sb.WriteByte(ch)
+		}
+		sb.WriteByte('\n')
+	}
+
+	return sb.String()
+}
+
+// Custom map constructor
 func NewCustomMap(width, height int) *Map {
-	return &Map{
+	m := &Map{
 		width:         width,
 		height:        height,
 		tiles:         createMatrix[Cell](height, width),
@@ -87,19 +115,20 @@ func NewCustomMap(width, height int) *Map {
 		entrancePoint: geometry.Point{X: 0, Y: 0},
 		exitPoint:     geometry.Point{X: 0, Y: 0},
 	}
+	m.SetSeed(rand.Int63())
+
+	return m
 }
 
-// NewDefaultMap - конструктор карты с размерами по умолчанию.
+// Map constructor with predefined width = 80 and height = 24
 func NewDefaultMap() *Map {
 	return NewCustomMap(80, 24)
 }
 
-// GetEntrance - получение координат входа на карту.
 func (m *Map) GetEntrancePoint() geometry.Point {
 	return m.entrancePoint
 }
 
-// GetExit - получение координат выхода с карты.
 func (m *Map) GetExitPoint() geometry.Point {
 	return m.exitPoint
 }
@@ -112,31 +141,27 @@ func (m *Map) GetExitRoom() *Room {
 	return m.exitRoom
 }
 
-// InBounds - проверка, находятся ли координаты внутри границ карты.
-func (m *Map) InBounds(pos geometry.Point) bool {
-	return pos.X >= 0 && pos.X < m.width && pos.Y >= 0 && pos.Y < m.height
+func (m *Map) InBounds(p geometry.Point) bool {
+	return p.X >= 0 && p.X < m.width && p.Y >= 0 && p.Y < m.height
 }
 
-// IsWalkable - проверка, можно ли пройти по тайлу на заданных координатах.
-func (m *Map) IsWalkable(pos geometry.Point) bool {
-	if !m.InBounds(pos) {
+func (m *Map) IsWalkable(p geometry.Point) bool {
+	if !m.InBounds(p) {
 		return false
 	}
-	t := m.tiles[pos.Y][pos.X].Type
+	t := m.tiles[p.Y][p.X].Type
 	return t != Empty && t != Wall
 }
 
-// GetActorID - получение идентификатора актора на заданных координатах.
-func (m *Map) GetActorID(pos geometry.Point) (int, bool) {
-	if !m.InBounds(pos) {
+func (m *Map) GetActorID(p geometry.Point) (int, bool) {
+	if !m.InBounds(p) {
 		return 0, false
 	}
 
-	id := m.actorGrid[pos.Y][pos.X]
+	id := m.actorGrid[p.Y][p.X]
 	return id, id != 0
 }
 
-// GetItemID - получение идентификатора предмета на заданных координатах.
 func (m *Map) GetItemID(pos geometry.Point) (int, bool) {
 	if !m.InBounds(pos) {
 		return 0, false
@@ -146,24 +171,85 @@ func (m *Map) GetItemID(pos geometry.Point) (int, bool) {
 	return id, id != 0
 }
 
-// SetActor - установка идентификатора актора на заданных координатах.
-func (m *Map) SetActor(pos geometry.Point, id int) {
-	if !m.IsWalkable(pos) {
-		log.Printf("[ERROR] Can't set actor at %v: tile is not walkable\n", pos)
-		return
+// Pentalty function for A* algorithm
+func (m *Map) GetCost(p geometry.Point) float64 {
+	tile := m.tiles[p.Y][p.X].Type
+	cost := 0.0
+
+	switch tile {
+	case Empty:
+		cost = 1.0
+	case Corridor:
+		cost = 0.5
+	case Floor, Door:
+		cost = 3.0
+	case Wall:
+		cost = 5.0
+	default:
+		return 1.0
 	}
-	m.actorGrid[pos.Y][pos.X] = id
+
+	if tile == Empty {
+		for _, n := range getNeighborList(p) {
+			if m.InBounds(n) {
+				nt := m.tiles[n.Y][n.X].Type
+				if nt == Wall || nt == Corridor {
+					cost += 5.0
+				}
+			}
+		}
+	}
+
+	return cost
 }
 
-// SetItem - установка идентификатора предмета на заданных координатах.
-func (m *Map) SetItem(pos geometry.Point, id int) {
-	if !m.IsWalkable(pos) {
-		log.Printf("[ERROR] Can't set item at %v: tile is not walkable\n", pos)
-		return
+// Returns points within the boundaries to the right, below, left and above given point
+// Digging = false does not return walls
+func (m *Map) GetNeighbors(p geometry.Point, digging bool) []geometry.Point {
+	valid := make([]geometry.Point, 0, 4)
+
+	for _, n := range getNeighborList(p) {
+		if m.InBounds(n) {
+			following := !digging && m.IsWalkable(n)
+
+			if digging || following {
+				valid = append(valid, n)
+			}
+		}
 	}
-	m.itemGrid[pos.Y][pos.X] = id
+
+	return valid
 }
 
+func (m *Map) SetActor(p geometry.Point, id int) {
+	if !m.IsWalkable(p) {
+		log.Printf("[ERROR] Can't set actor at %v: tile is not walkable\n", p)
+		return
+	}
+	m.actorGrid[p.Y][p.X] = id
+}
+
+func (m *Map) SetItem(p geometry.Point, id int) {
+	if !m.IsWalkable(p) {
+		log.Printf("[ERROR] Can't set item at %v: tile is not walkable\n", p)
+		return
+	}
+	m.itemGrid[p.Y][p.X] = id
+}
+
+func (m *Map) SetSeed(seed int64) {
+	m.seed = seed
+	m.rndm = rand.New(rand.NewSource(seed))
+}
+
+func (m *Map) GetSeed() int64 {
+	return m.seed
+}
+
+// Generates rooms and corridors between them using given grid
+// k=cols, n=rows, k*n=rooms
+// Grid must be positive
+// Too big grid lead to error
 func (m *Map) GenerateLevel(k, n int) bool {
 	if !m.canFitGrid(k, n) {
 		return false
@@ -174,7 +260,13 @@ func (m *Map) GenerateLevel(k, n int) bool {
 	return true
 }
 
-func (m *Map) GetRoom(pos geometry.Point) (*Room, bool) {
+func (m *Map) GetRoomsCount() int {
+	return len(m.rooms)
+}
+
+// Returns (pointer, true) to the room where the given point is located
+// Returns (nil, false) if point is outside any room
+func (m *Map) GetRoomByPoint(pos geometry.Point) (*Room, bool) {
 	for _, room := range m.rooms {
 		x, y := pos.X, pos.Y
 		xMin, xMax := room.pos.X, room.pos.X+room.width
@@ -188,22 +280,35 @@ func (m *Map) GetRoom(pos geometry.Point) (*Room, bool) {
 	return nil, false
 }
 
-func (m *Map) GetRoomPos(room *Room) (geometry.Point, bool) {
-	if room == nil {
-		return geometry.Point{}, false
+// Returns (pointer, true) to the room with given id
+// Returns (nil, false) if the room with given id is not found
+func (m *Map) GetRoomByID(id int) (*Room, bool) {
+	for _, room := range m.rooms {
+		if room.id == id {
+			return room, true
+		}
 	}
-	return room.pos, true
+
+	return nil, false
 }
 
-func (m *Map) GetRoomHW(room *Room) (int, int, bool) {
-	if room == nil {
-		return 0, 0, false
-	}
-	return room.height, room.width, true
+func (r *Room) GetID() int {
+	return r.id
+}
+
+func (r *Room) GetPos() geometry.Point {
+	return r.pos
+}
+
+func (r *Room) GetHW() (int, int) {
+	return r.height, r.width
+}
+
+func (r *Room) GetCenter() geometry.Point {
+	return r.center
 }
 
 // PRIVATE
-// createMatrix - инициализация слайса заданного размера и типа.
 func createMatrix[T any](rows, cols int) [][]T {
 	matrix := make([][]T, rows)
 	for i := range matrix {
@@ -212,13 +317,23 @@ func createMatrix[T any](rows, cols int) [][]T {
 	return matrix
 }
 
+func getNeighborList(p geometry.Point) []geometry.Point {
+	neighbors := []geometry.Point{
+		{X: p.X, Y: p.Y + 1},
+		{X: p.X, Y: p.Y - 1},
+		{X: p.X + 1, Y: p.Y},
+		{X: p.X - 1, Y: p.Y},
+	}
+	return neighbors
+}
+
 func (m *Map) canFitGrid(k, n int) bool {
 	if k <= 0 || n <= 0 {
 		return false
 	}
 
-	widthMarigns, heightMargins := k-1, n-1
-	minAllowedMapWidth := k*MinRoomSize + MarginBetweenSectors*widthMarigns
+	widthMargins, heightMargins := k-1, n-1
+	minAllowedMapWidth := k*MinRoomSize + MarginBetweenSectors*widthMargins
 	minAllowedMapHeight := n*MinRoomSize + MarginBetweenSectors*heightMargins
 
 	if m.width < minAllowedMapWidth || m.height < minAllowedMapHeight {
@@ -228,7 +343,7 @@ func (m *Map) canFitGrid(k, n int) bool {
 	return true
 }
 
-// Function creates puzzle layout: every sector has different size
+// Function creates puzzle layout so every sector has different size
 // k stands for x-dimension, n stands for y-dimension
 func (m *Map) sectorization(k, n int) [][]Sector {
 	sectors := createMatrix[Sector](n, k)
@@ -250,7 +365,7 @@ func (m *Map) sectorization(k, n int) [][]Sector {
 				randHeightRemAdd = heightRemLimit[col]
 				yMax = yMins[col] + sectorHeight + randHeightRemAdd
 			} else {
-				randHeightRemAdd = rand.Intn(heightRemLimit[col] + 1)
+				randHeightRemAdd = m.rndm.Intn(heightRemLimit[col] + 1)
 				yMax = yMins[col] + sectorHeight + randHeightRemAdd - MarginBetweenSectors
 			}
 			heightRemLimit[col] -= randHeightRemAdd
@@ -260,7 +375,7 @@ func (m *Map) sectorization(k, n int) [][]Sector {
 				randWidthRemAdd = widthRemLimit
 				xMax = xMin + sectorWidth + randWidthRemAdd
 			} else {
-				randWidthRemAdd = rand.Intn(widthRemLimit + 1)
+				randWidthRemAdd = m.rndm.Intn(widthRemLimit + 1)
 				xMax = xMin + sectorWidth + randWidthRemAdd - MarginBetweenSectors
 			}
 			widthRemLimit -= randWidthRemAdd
@@ -287,14 +402,14 @@ func (m *Map) createRooms(sectors [][]Sector) {
 			// Pick random height and width
 			sectorHeight := yMax - yMin
 			sectorWidth := xMax - xMin
-			roomHeight := minHeight + rand.Intn(sectorHeight-minHeight+1)
-			roomWidth := minWidth + rand.Intn(sectorWidth-minWidth+1)
+			roomHeight := minHeight + m.rndm.Intn(sectorHeight-minHeight+1)
+			roomWidth := minWidth + m.rndm.Intn(sectorWidth-minWidth+1)
 
 			// Pick random pos (left-upper corner)
 			allowedYMax := yMax - roomHeight
 			allowedXMax := xMax - roomWidth
-			posX := xMin + rand.Intn(allowedXMax-xMin+1)
-			posY := yMin + rand.Intn(allowedYMax-yMin+1)
+			posX := xMin + m.rndm.Intn(allowedXMax-xMin+1)
+			posY := yMin + m.rndm.Intn(allowedYMax-yMin+1)
 
 			// Assemble
 			m.rooms[row*cols+col] = &Room{
@@ -310,22 +425,18 @@ func (m *Map) createRooms(sectors [][]Sector) {
 		}
 	}
 
-	m.fillTiles()
+	m.drawRooms()
 }
 
-func (m *Map) fillTiles() {
+func (m *Map) drawRooms() {
 	for _, room := range m.rooms {
-		m.drawRoom(*room)
-	}
-}
-
-func (m *Map) drawRoom(room Room) {
-	for y := room.pos.Y; y < room.pos.Y+room.height; y++ {
-		for x := room.pos.X; x < room.pos.X+room.width; x++ {
-			if y == room.pos.Y || y == room.pos.Y+room.height-1 || x == room.pos.X || x == room.pos.X+room.width-1 {
-				m.tiles[y][x].Type = Wall
-			} else {
-				m.tiles[y][x].Type = Floor
+		for y := room.pos.Y; y < room.pos.Y+room.height; y++ {
+			for x := room.pos.X; x < room.pos.X+room.width; x++ {
+				if y == room.pos.Y || y == room.pos.Y+room.height-1 || x == room.pos.X || x == room.pos.X+room.width-1 {
+					m.tiles[y][x].Type = Wall
+				} else {
+					m.tiles[y][x].Type = Floor
+				}
 			}
 		}
 	}
@@ -333,7 +444,7 @@ func (m *Map) drawRoom(room Room) {
 
 func (m *Map) connectRooms() {
 	// Entrance and exit room position on the map is always random
-	rand.Shuffle(len(m.rooms), func(i, j int) {
+	m.rndm.Shuffle(len(m.rooms), func(i, j int) {
 		m.rooms[i], m.rooms[j] = m.rooms[j], m.rooms[i]
 	})
 
@@ -343,7 +454,22 @@ func (m *Map) connectRooms() {
 	m.tiles[m.exitPoint.Y][m.exitPoint.X].Type = Exit
 
 	for i := 0; i < len(m.rooms)-1; i++ {
-		m.digCorridor(m.rooms[i].center, m.rooms[i+1].center)
+		path := algorithm.FindPath(m, m.rooms[i].center, m.rooms[i+1].center, true)
+		m.drawCorridors(path)
+	}
+}
+
+func (m *Map) drawCorridors(path []geometry.Point) {
+	for _, p := range path {
+		x, y := p.X, p.Y
+		tile := &m.tiles[y][x]
+
+		switch tile.Type {
+		case Empty:
+			tile.Type = Corridor
+		case Wall:
+			tile.Type = Door
+		}
 	}
 }
 
@@ -353,71 +479,8 @@ func (m *Map) pickRandomPointInRoom(room Room) geometry.Point {
 	innerY := room.pos.Y + 1
 	innerHeight := room.height - 2
 
-	x := innerX + rand.Intn(innerWidth)
-	y := innerY + rand.Intn(innerHeight)
+	x := innerX + m.rndm.Intn(innerWidth)
+	y := innerY + m.rndm.Intn(innerHeight)
 
 	return geometry.Point{X: x, Y: y}
-}
-
-func (m *Map) digCorridor(point1, point2 geometry.Point) {
-	distanceX, distanceY := point2.X-point1.X, point2.Y-point1.Y
-	stepX, stepY := 1, 1
-	if distanceX < 0 {
-		stepX = -1
-		distanceX = -distanceX
-	}
-	if distanceY < 0 {
-		stepY = -1
-		distanceY = -distanceY
-	}
-
-	if rand.Intn(2) == 0 {
-		m.digCorridorX(point1, stepX, distanceX)
-		m.digCorridorY(geometry.Point{X: point2.X, Y: point1.Y}, stepY, distanceY)
-	} else {
-		m.digCorridorY(point1, stepY, distanceY)
-		m.digCorridorX(geometry.Point{X: point1.X, Y: point2.Y}, stepX, distanceX)
-	}
-}
-
-func (m *Map) digCorridorX(initial geometry.Point, step, distance int) {
-	x, y := initial.X, initial.Y
-
-	for i := 0; i <= distance; i++ {
-		tile := &m.tiles[y][x]
-
-		if tile.Type == Empty {
-			tile.Type = Corridor
-		} else if tile.Type == Wall {
-			prevX := x - step
-			nextX := x + step
-
-			if (m.InBounds(geometry.Point{X: prevX, Y: y}) && m.tiles[y][prevX].Type == Floor) || (m.InBounds(geometry.Point{X: nextX, Y: y}) && m.tiles[y][nextX].Type == Floor) {
-				tile.Type = Door
-			}
-		}
-
-		x += step
-	}
-}
-
-func (m *Map) digCorridorY(initial geometry.Point, step, distance int) {
-	x, y := initial.X, initial.Y
-
-	for i := 0; i <= distance; i++ {
-		tile := &m.tiles[y][x]
-
-		if tile.Type == Empty {
-			tile.Type = Corridor
-		} else if tile.Type == Wall {
-			prevY := y - step
-			nextY := y + step
-
-			if (m.InBounds(geometry.Point{X: x, Y: prevY}) && m.tiles[prevY][x].Type == Floor) || (m.InBounds(geometry.Point{X: x, Y: nextY}) && m.tiles[nextY][x].Type == Floor) {
-				tile.Type = Door
-			}
-		}
-
-		y += step
-	}
 }
