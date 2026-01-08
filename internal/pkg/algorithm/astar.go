@@ -1,11 +1,17 @@
+// Package algorithm implements the internals algoritms and data structures, like:
+// - A*;
+// - PQueue;
 package algorithm
 
 import (
 	"container/heap"
-	"github.com/Nikolay-Yakunin/gouge/internal/pkg/geometry"
 	"math"
+
+	"github.com/Nikolay-Yakunin/gouge/internal/pkg/geometry"
 )
 
+// Graph interface of map for A* algorithm
+// interface on consumer side
 type Graph interface {
 	GetCost(p geometry.Point) float64
 	GetNeighbors(p geometry.Point, digging bool) []geometry.Point
@@ -17,6 +23,7 @@ func calcHeuristic(p1, p2 geometry.Point) float64 {
 	return math.Abs(float64(x2-x1)) + math.Abs(float64(y2-y1))
 }
 
+// reconstructPath builds path from start to end node
 func reconstructPath(endpoint *node) []geometry.Point {
 	path := make([]geometry.Point, 0)
 	cur := endpoint
@@ -33,7 +40,8 @@ func reconstructPath(endpoint *node) []geometry.Point {
 	return path
 }
 
-// Finds path between two points
+// FindPath - Finds path between two points
+// A* implementation
 // digging=true allows to pass through the walls
 // digging=false can be useful for following
 func FindPath(g Graph, initial, target geometry.Point, digging bool) []geometry.Point {

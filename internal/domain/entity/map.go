@@ -1,15 +1,17 @@
-// Map stores information about game landscape, actors and items
+// Package entity within:
+// - Map stores information about game landscape, actors and items;
 package entity
 
 import (
-	"github.com/Nikolay-Yakunin/gouge/internal/pkg/algorithm"
-	"github.com/Nikolay-Yakunin/gouge/internal/pkg/geometry"
 	"log"
 	"math/rand"
 	"strings"
+
+	"github.com/Nikolay-Yakunin/gouge/internal/pkg/algorithm"
+	"github.com/Nikolay-Yakunin/gouge/internal/pkg/geometry"
 )
 
-// DATA STRUCTURES
+// Map - structure for gameboard
 type Map struct {
 	width, height int            // Cols and rows
 	tiles         [][]Cell       // Layer 1: Game landscape
@@ -24,8 +26,10 @@ type Map struct {
 	seed          int64          // Seed of local random generator
 }
 
+// TileType - enumeration of cell tile types
 type TileType int
 
+// Tile types
 const (
 	Empty TileType = iota
 	Wall
@@ -35,40 +39,49 @@ const (
 	Exit
 )
 
+// VisibilityState - enumeration of cell visibility states
 type VisibilityState int
 
+// Visibility states
 const (
 	Unexplored VisibilityState = iota
 	Explored
 	Visible
 )
 
+// Cell - structure for cell entity
 type Cell struct {
 	Type       TileType
 	Visibility VisibilityState
 }
 
+// Sector - structure for sector entity
 type Sector struct {
 	xMin, yMin, xMax, yMax int
 }
 
+// Map constants
 const (
 	MarginBetweenSectors = 2 // Right margin of one room + left margin of second room
 )
 
+// Room - structure for room entity
 type Room struct {
 	id            int
-	pos           geometry.Point
+	pos           geometry.Point // Left-upper corner
 	width, height int
 	center        geometry.Point
 }
 
+// Room constants
 const (
 	MinRoomSize = 3 // Wall + Floor + Wall
 )
 
 // API
 
+// TODO: need test for 2 or more entities on the same tile
+// String - returns string representation of the map
 func (m *Map) String() string {
 	var sb strings.Builder
 
@@ -104,7 +117,7 @@ func (m *Map) String() string {
 	return sb.String()
 }
 
-// Custom map constructor
+// NewCustomMap - map constructor
 func NewCustomMap(width, height int) *Map {
 	m := &Map{
 		width:         width,
@@ -115,36 +128,43 @@ func NewCustomMap(width, height int) *Map {
 		entrancePoint: geometry.Point{X: 0, Y: 0},
 		exitPoint:     geometry.Point{X: 0, Y: 0},
 	}
+	// #nosec G404
 	m.SetSeed(rand.Int63())
 
 	return m
 }
 
-// Map constructor with predefined width = 80 and height = 24
+// NewDefaultMap - generate default map with predefined width = 80 and height = 24
 func NewDefaultMap() *Map {
 	return NewCustomMap(80, 24)
 }
 
+// GetEntrancePoint - returns entrance point
 func (m *Map) GetEntrancePoint() geometry.Point {
 	return m.entrancePoint
 }
 
+// GetExitPoint - returns exit point
 func (m *Map) GetExitPoint() geometry.Point {
 	return m.exitPoint
 }
 
+// GetEntranceRoom - returns entrance room pointer
 func (m *Map) GetEntranceRoom() *Room {
 	return m.entranceRoom
 }
 
+// GetExitRoom - returns exit room pointer
 func (m *Map) GetExitRoom() *Room {
 	return m.exitRoom
 }
 
+// InBounds - return true if point in map boundaries
 func (m *Map) InBounds(p geometry.Point) bool {
 	return p.X >= 0 && p.X < m.width && p.Y >= 0 && p.Y < m.height
 }
 
+// IsWalkable - returns true if tile at given position is walkable
 func (m *Map) IsWalkable(p geometry.Point) bool {
 	if !m.InBounds(p) {
 		return false
@@ -153,6 +173,7 @@ func (m *Map) IsWalkable(p geometry.Point) bool {
 	return t != Empty && t != Wall
 }
 
+// GetActorID - returns actor ID at given position
 func (m *Map) GetActorID(p geometry.Point) (int, bool) {
 	if !m.InBounds(p) {
 		return 0, false
@@ -162,6 +183,7 @@ func (m *Map) GetActorID(p geometry.Point) (int, bool) {
 	return id, id != 0
 }
 
+// GetItemID - returns item ID at given position
 func (m *Map) GetItemID(pos geometry.Point) (int, bool) {
 	if !m.InBounds(pos) {
 		return 0, false
@@ -171,7 +193,7 @@ func (m *Map) GetItemID(pos geometry.Point) (int, bool) {
 	return id, id != 0
 }
 
-// Pentalty function for A* algorithm
+// GetCost - Pentalty function for A* algorithm
 func (m *Map) GetCost(p geometry.Point) float64 {
 	tile := m.tiles[p.Y][p.X].Type
 	cost := 0.0
@@ -203,15 +225,19 @@ func (m *Map) GetCost(p geometry.Point) float64 {
 	return cost
 }
 
+// GetNeighbors - returns a slice of neighboring points
 // Returns points within the boundaries to the right, below, left and above given point
 // Digging = false does not return walls
 func (m *Map) GetNeighbors(p geometry.Point, digging bool) []geometry.Point {
 	valid := make([]geometry.Point, 0, 4)
 
 	for _, n := range getNeighborList(p) {
+		// Only points in bounds
 		if m.InBounds(n) {
+			// If digging is false, we can only follow walkable tiles
 			following := !digging && m.IsWalkable(n)
 
+			// If digging is true, we can pass through walls
 			if digging || following {
 				valid = append(valid, n)
 			}
@@ -221,6 +247,9 @@ func (m *Map) GetNeighbors(p geometry.Point, digging bool) []geometry.Point {
 	return valid
 }
 
+// TODO: test if set do not clean previous position
+
+// SetActor - sets actor position on the map
 func (m *Map) SetActor(p geometry.Point, id int) {
 	if !m.IsWalkable(p) {
 		log.Printf("[ERROR] Can't set actor at %v: tile is not walkable\n", p)
@@ -229,6 +258,7 @@ func (m *Map) SetActor(p geometry.Point, id int) {
 	m.actorGrid[p.Y][p.X] = id
 }
 
+// SetItem - sets item position on the map
 func (m *Map) SetItem(p geometry.Point, id int) {
 	if !m.IsWalkable(p) {
 		log.Printf("[ERROR] Can't set item at %v: tile is not walkable\n", p)
@@ -237,16 +267,19 @@ func (m *Map) SetItem(p geometry.Point, id int) {
 	m.itemGrid[p.Y][p.X] = id
 }
 
+// SetSeed - set seed and generate new random generator
 func (m *Map) SetSeed(seed int64) {
 	m.seed = seed
+	// #nosec G404
 	m.rndm = rand.New(rand.NewSource(seed))
 }
 
+// GetSeed - returns current map seed
 func (m *Map) GetSeed() int64 {
 	return m.seed
 }
 
-// Generates rooms and corridors between them using given grid
+// GenerateLevel - generates rooms and corridors between them using given grid
 // k=cols, n=rows, k*n=rooms
 // Grid must be positive
 // Too big grid lead to error
@@ -260,10 +293,12 @@ func (m *Map) GenerateLevel(k, n int) bool {
 	return true
 }
 
+// GetRoomsCount - wrap on len function
 func (m *Map) GetRoomsCount() int {
 	return len(m.rooms)
 }
 
+// GetRoomByPoint - returns room by point (like by coordinates)
 // Returns (pointer, true) to the room where the given point is located
 // Returns (nil, false) if point is outside any room
 func (m *Map) GetRoomByPoint(pos geometry.Point) (*Room, bool) {
@@ -280,6 +315,7 @@ func (m *Map) GetRoomByPoint(pos geometry.Point) (*Room, bool) {
 	return nil, false
 }
 
+// GetRoomByID - returns room by id
 // Returns (pointer, true) to the room with given id
 // Returns (nil, false) if the room with given id is not found
 func (m *Map) GetRoomByID(id int) (*Room, bool) {
@@ -292,18 +328,22 @@ func (m *Map) GetRoomByID(id int) (*Room, bool) {
 	return nil, false
 }
 
+// GetID - returns room ID
 func (r *Room) GetID() int {
 	return r.id
 }
 
+// GetPos - returns room position (left-upper corner)
 func (r *Room) GetPos() geometry.Point {
 	return r.pos
 }
 
+// GetHW - returns room height and width
 func (r *Room) GetHW() (int, int) {
 	return r.height, r.width
 }
 
+// GetCenter - returns room center point
 func (r *Room) GetCenter() geometry.Point {
 	return r.center
 }

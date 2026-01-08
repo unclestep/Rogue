@@ -13,23 +13,27 @@ type node struct {
 	closed bool // Skip this node if it's true
 }
 
+// PQueue a queue of nodes
 type PQueue []*node
 
+// Len - wrap on len function
 func (pq PQueue) Len() int {
 	return len(pq)
 }
 
-// Pop method will give an item with the lowest priority
+// Less - a given compare result between two items
 func (pq PQueue) Less(i, j int) bool {
 	return pq[i].rank < pq[j].rank
 }
 
+// Swap - swaps two items in the queue
 func (pq PQueue) Swap(i, j int) {
 	pq[i], pq[j] = pq[j], pq[i]
 	pq[i].index = i
 	pq[j].index = j
 }
 
+// Push - adds item to the queue
 func (pq *PQueue) Push(x any) {
 	n := len(*pq)
 	item := x.(*node)
@@ -37,9 +41,10 @@ func (pq *PQueue) Push(x any) {
 	*pq = append(*pq, item)
 }
 
+// Pop - removes and return last item from the queue
 func (pq *PQueue) Pop() any {
 	old := *pq
-	n := len(old)
+	n := old.Len()
 	item := old[n-1]
 	item.index = -1
 	*pq = old[0 : n-1]
