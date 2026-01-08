@@ -1,10 +1,11 @@
 package entities
 
 import (
+	"testing"
+
 	"github.com/Nikolay-Yakunin/gouge/internal/domain/entity"
 	"github.com/Nikolay-Yakunin/gouge/internal/pkg/algorithm"
 	"github.com/Nikolay-Yakunin/gouge/internal/pkg/geometry"
-	"testing"
 )
 
 func TestGenerateLevelNormalGrid(t *testing.T) {
