@@ -1,4 +1,4 @@
-// Package algorithm implements the internals algoritms and data structures, like:
+// Package algorithm implements the internals algorithms and data structures, like:
 // - A*;
 // - PQueue;
 package algorithm
@@ -6,26 +6,18 @@ package algorithm
 import (
 	"container/heap"
 	"math"
-
-	"github.com/Nikolay-Yakunin/gouge/internal/pkg/geometry"
 )
 
 // Graph interface of map for A* algorithm
 // interface on consumer side
-type Graph interface {
-	GetCost(p geometry.Point) float64
-	GetNeighbors(p geometry.Point, digging bool) []geometry.Point
-}
-
-func calcHeuristic(p1, p2 geometry.Point) float64 {
-	x1, y1 := p1.X, p1.Y
-	x2, y2 := p2.X, p2.Y
-	return math.Abs(float64(x2-x1)) + math.Abs(float64(y2-y1))
+type Graph[T comparable] interface {
+	GetNeighbors(n T) []T
+	CalcHeuristic(n1, n2 T) float64
 }
 
 // reconstructPath builds path from start to end node
-func reconstructPath(endpoint *node) []geometry.Point {
-	path := make([]geometry.Point, 0)
+func reconstructPath[T comparable](endpoint *node[T]) []T {
+	path := make([]T, 0)
 	cur := endpoint
 
 	for cur != nil {
@@ -42,39 +34,49 @@ func reconstructPath(endpoint *node) []geometry.Point {
 
 // FindPath - Finds path between two points
 // A* implementation
-// digging=true allows to pass through the walls
-// digging=false can be useful for following
-func FindPath(g Graph, initial, target geometry.Point, digging bool) []geometry.Point {
-	pq := make(PQueue, 0)
-	initialNode := &node{
+func FindPath[T comparable](g Graph[T], initial, target T, getCost func(n T) float64) []T {
+	if math.IsInf(getCost(initial), 1) || math.IsInf(getCost(target), 1) {
+		return nil
+	}
+
+	pq := make(PQueue[T], 0)
+	initialNode := &node[T]{
 		pos:  initial,
-		rank: calcHeuristic(initial, target),
+		rank: g.CalcHeuristic(initial, target),
 	}
 	heap.Push(&pq, initialNode)
 
-	nodeMap := make(map[geometry.Point]*node)
+	nodeMap := make(map[T]*node[T])
 	nodeMap[initial] = initialNode
 
 	for len(pq) > 0 {
-		cur := heap.Pop(&pq).(*node)
+		cur := heap.Pop(&pq).(*node[T])
 		nodeMap[cur.pos].closed = true
 
 		if cur.pos == target {
 			return reconstructPath(cur)
 		}
 
-		for _, neighbor := range g.GetNeighbors(cur.pos, digging) {
-			n, visited := nodeMap[neighbor]
+		for _, neighbor := range g.GetNeighbors(cur.pos) {
+			neighborCost := getCost(neighbor)
+			if math.IsInf(neighborCost, 1) {
+				continue
+			}
 
+			n, visited := nodeMap[neighbor]
 			if visited && n.closed {
 				continue
 			}
 
-			newCost := cur.cost + g.GetCost(neighbor)
-			newRank := newCost + calcHeuristic(neighbor, target)
+			newCost := cur.cost + neighborCost
+			if math.IsInf(newCost, 1) {
+				continue
+			}
+
+			newRank := newCost + g.CalcHeuristic(neighbor, target)
 
 			if !visited {
-				newNode := &node{
+				newNode := &node[T]{
 					pos:    neighbor,
 					cost:   newCost,
 					rank:   newRank,

@@ -4,6 +4,7 @@ package entity
 
 import (
 	"log"
+	"math"
 	"math/rand"
 	"strings"
 
@@ -22,8 +23,18 @@ type Map struct {
 	rooms         []*Room        // Pointers to all level rooms
 	entranceRoom  *Room          // Pointer to room with spawn point
 	exitRoom      *Room          // Pointer to room with exit point
-	rndm          *rand.Rand     // Local random generator (for representative tests)
+	rand          *rand.Rand     // Local random generator (for representative tests)
 	seed          int64          // Seed of local random generator
+}
+
+type NavMap map[*Room][]Edge
+
+type Edge struct {
+	src     *Room
+	srcDoor geometry.Point
+	dst     *Room
+	dstDoor geometry.Point
+	weight  int
 }
 
 // TileType - enumeration of cell tile types
@@ -71,12 +82,37 @@ type Room struct {
 	pos           geometry.Point // Left-upper corner
 	width, height int
 	center        geometry.Point
+	doors         []geometry.Point
 }
 
 // Room constants
 const (
 	MinRoomSize = 3 // Wall + Floor + Wall
 )
+
+// Graph Interface Implementation
+
+// GetNeighbors - returns a slice of neighboring points
+// Returns points within the boundaries to the right, below, left and above given point
+// Digging = false does not return walls
+func (m *Map) GetNeighbors(p geometry.Point) []geometry.Point {
+	valid := make([]geometry.Point, 0, 4)
+
+	for _, n := range getNeighborList(p) {
+		// Only points in bounds
+		if m.InBounds(n) {
+			valid = append(valid, n)
+		}
+	}
+
+	return valid
+}
+
+func (m *Map) CalcHeuristic(p1, p2 geometry.Point) float64 {
+	x1, y1 := p1.X, p1.Y
+	x2, y2 := p2.X, p2.Y
+	return math.Abs(float64(x2-x1)) + math.Abs(float64(y2-y1))
+}
 
 // API
 
@@ -193,60 +229,6 @@ func (m *Map) GetItemID(pos geometry.Point) (int, bool) {
 	return id, id != 0
 }
 
-// GetCost - Pentalty function for A* algorithm
-func (m *Map) GetCost(p geometry.Point) float64 {
-	tile := m.tiles[p.Y][p.X].Type
-	cost := 0.0
-
-	switch tile {
-	case Empty:
-		cost = 1.0
-	case Corridor:
-		cost = 0.5
-	case Floor, Door:
-		cost = 3.0
-	case Wall:
-		cost = 5.0
-	default:
-		return 1.0
-	}
-
-	if tile == Empty {
-		for _, n := range getNeighborList(p) {
-			if m.InBounds(n) {
-				nt := m.tiles[n.Y][n.X].Type
-				if nt == Wall || nt == Corridor {
-					cost += 5.0
-				}
-			}
-		}
-	}
-
-	return cost
-}
-
-// GetNeighbors - returns a slice of neighboring points
-// Returns points within the boundaries to the right, below, left and above given point
-// Digging = false does not return walls
-func (m *Map) GetNeighbors(p geometry.Point, digging bool) []geometry.Point {
-	valid := make([]geometry.Point, 0, 4)
-
-	for _, n := range getNeighborList(p) {
-		// Only points in bounds
-		if m.InBounds(n) {
-			// If digging is false, we can only follow walkable tiles
-			following := !digging && m.IsWalkable(n)
-
-			// If digging is true, we can pass through walls
-			if digging || following {
-				valid = append(valid, n)
-			}
-		}
-	}
-
-	return valid
-}
-
 // TODO: test if set do not clean previous position
 
 // SetActor - sets actor position on the map
@@ -271,7 +253,7 @@ func (m *Map) SetItem(p geometry.Point, id int) {
 func (m *Map) SetSeed(seed int64) {
 	m.seed = seed
 	// #nosec G404
-	m.rndm = rand.New(rand.NewSource(seed))
+	m.rand = rand.New(rand.NewSource(seed))
 }
 
 // GetSeed - returns current map seed
@@ -292,6 +274,21 @@ func (m *Map) GenerateLevel(k, n int) bool {
 	m.connectRooms()
 	return true
 }
+
+func (m *Map) FindPath(p1, p2 geometry.Point) ([]geometry.Point, bool) {
+	if !m.IsWalkable(p1) || !m.IsWalkable(p2) {
+		return nil, false
+	}
+
+	path := algorithm.FindPath[geometry.Point](m, p1, p2, m.getFollowingCost)
+	if path == nil {
+		return nil, false
+	}
+
+	return path, true
+}
+
+// Room API
 
 // GetRoomsCount - wrap on len function
 func (m *Map) GetRoomsCount() int {
@@ -405,7 +402,7 @@ func (m *Map) sectorization(k, n int) [][]Sector {
 				randHeightRemAdd = heightRemLimit[col]
 				yMax = yMins[col] + sectorHeight + randHeightRemAdd
 			} else {
-				randHeightRemAdd = m.rndm.Intn(heightRemLimit[col] + 1)
+				randHeightRemAdd = m.rand.Intn(heightRemLimit[col] + 1)
 				yMax = yMins[col] + sectorHeight + randHeightRemAdd - MarginBetweenSectors
 			}
 			heightRemLimit[col] -= randHeightRemAdd
@@ -415,7 +412,7 @@ func (m *Map) sectorization(k, n int) [][]Sector {
 				randWidthRemAdd = widthRemLimit
 				xMax = xMin + sectorWidth + randWidthRemAdd
 			} else {
-				randWidthRemAdd = m.rndm.Intn(widthRemLimit + 1)
+				randWidthRemAdd = m.rand.Intn(widthRemLimit + 1)
 				xMax = xMin + sectorWidth + randWidthRemAdd - MarginBetweenSectors
 			}
 			widthRemLimit -= randWidthRemAdd
@@ -442,14 +439,14 @@ func (m *Map) createRooms(sectors [][]Sector) {
 			// Pick random height and width
 			sectorHeight := yMax - yMin
 			sectorWidth := xMax - xMin
-			roomHeight := minHeight + m.rndm.Intn(sectorHeight-minHeight+1)
-			roomWidth := minWidth + m.rndm.Intn(sectorWidth-minWidth+1)
+			roomHeight := minHeight + m.rand.Intn(sectorHeight-minHeight+1)
+			roomWidth := minWidth + m.rand.Intn(sectorWidth-minWidth+1)
 
 			// Pick random pos (left-upper corner)
 			allowedYMax := yMax - roomHeight
 			allowedXMax := xMax - roomWidth
-			posX := xMin + m.rndm.Intn(allowedXMax-xMin+1)
-			posY := yMin + m.rndm.Intn(allowedYMax-yMin+1)
+			posX := xMin + m.rand.Intn(allowedXMax-xMin+1)
+			posY := yMin + m.rand.Intn(allowedYMax-yMin+1)
 
 			// Assemble
 			m.rooms[row*cols+col] = &Room{
@@ -482,19 +479,82 @@ func (m *Map) drawRooms() {
 	}
 }
 
+func (m *Map) findDiggingPath(r1, r2 *Room) ([]geometry.Point, bool) {
+	if r1 == nil || r2 == nil {
+		return nil, false
+	}
+
+	path := algorithm.FindPath[geometry.Point](m, r1.center, r2.center, m.getDiggingCost)
+	if path == nil {
+		return nil, false
+	}
+
+	return path, true
+}
+
+func (m *Map) getDiggingCost(p geometry.Point) float64 {
+	tile := m.tiles[p.Y][p.X].Type
+	cost := 0.0
+
+	switch tile {
+	case Empty:
+		cost = 1.0
+	case Corridor:
+		cost = 0.5
+	case Floor, Door:
+		cost = 3.0
+	case Wall:
+		cost = 5.0
+	default:
+		return 1.0
+	}
+
+	if tile == Empty {
+		for _, n := range getNeighborList(p) {
+			if m.InBounds(n) {
+				nt := m.tiles[n.Y][n.X].Type
+				if nt == Wall || nt == Corridor {
+					cost += 5.0
+				}
+			}
+		}
+	}
+
+	return cost
+}
+
+func (m *Map) getFollowingCost(p geometry.Point) float64 {
+	tile := m.tiles[p.Y][p.X].Type
+	cost := 0.0
+
+	switch tile {
+	case Empty, Wall:
+		cost = math.Inf(1)
+	case Corridor, Floor, Door:
+		cost = 1.0
+	default:
+		return 1.0
+	}
+
+	return cost
+}
+
 func (m *Map) connectRooms() {
 	// Entrance and exit room position on the map is always random
-	m.rndm.Shuffle(len(m.rooms), func(i, j int) {
+	m.rand.Shuffle(len(m.rooms), func(i, j int) {
 		m.rooms[i], m.rooms[j] = m.rooms[j], m.rooms[i]
 	})
 
 	m.entranceRoom, m.exitRoom = m.rooms[0], m.rooms[len(m.rooms)-1]
-	m.entrancePoint = m.pickRandomPointInRoom(*m.entranceRoom)
-	m.exitPoint = m.pickRandomPointInRoom(*m.exitRoom)
+	m.entrancePoint = m.pickRandomPointInRoom(m.entranceRoom)
+	m.exitPoint = m.pickRandomPointInRoom(m.exitRoom)
 	m.tiles[m.exitPoint.Y][m.exitPoint.X].Type = Exit
 
 	for i := 0; i < len(m.rooms)-1; i++ {
-		path := algorithm.FindPath(m, m.rooms[i].center, m.rooms[i+1].center, true)
+		path, ok := m.findDiggingPath(m.rooms[i], m.rooms[i+1])
+		if !ok {
+			log.Fatalf("[ERROR] Could not find digging path between room #%d and room #%d", i, i+1)
+		}
 		m.drawCorridors(path)
 	}
 }
@@ -509,18 +569,19 @@ func (m *Map) drawCorridors(path []geometry.Point) {
 			tile.Type = Corridor
 		case Wall:
 			tile.Type = Door
+		default:
 		}
 	}
 }
 
-func (m *Map) pickRandomPointInRoom(room Room) geometry.Point {
+func (m *Map) pickRandomPointInRoom(room *Room) geometry.Point {
 	innerX := room.pos.X + 1
 	innerWidth := room.width - 2
 	innerY := room.pos.Y + 1
 	innerHeight := room.height - 2
 
-	x := innerX + m.rndm.Intn(innerWidth)
-	y := innerY + m.rndm.Intn(innerHeight)
+	x := innerX + m.rand.Intn(innerWidth)
+	y := innerY + m.rand.Intn(innerHeight)
 
 	return geometry.Point{X: x, Y: y}
 }

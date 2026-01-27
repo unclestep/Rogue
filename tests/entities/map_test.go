@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/Nikolay-Yakunin/gouge/internal/domain/entity"
-	"github.com/Nikolay-Yakunin/gouge/internal/pkg/algorithm"
 	"github.com/Nikolay-Yakunin/gouge/internal/pkg/geometry"
 )
 
@@ -77,7 +76,7 @@ func TestGenerateLevelConnectivity(t *testing.T) {
 			}
 		}
 
-		if algorithm.FindPath(m, entrance, exit, false) == nil {
+		if _, ok := m.FindPath(entrance, exit); !ok {
 			t.Errorf("Seed %v: map is not fully connected\n", seed)
 			t.Errorf("\n%v", m)
 			break
@@ -164,16 +163,4 @@ func TestRoomQueries(t *testing.T) {
 			t.Error("Should not find room with invalid ID")
 		}
 	})
-}
-
-func TestGetCost(t *testing.T) {
-	m := entity.NewDefaultMap()
-	m.GenerateLevel(3, 3)
-
-	p := m.GetEntrancePoint()
-	cost := m.GetCost(p)
-
-	if cost != 3.0 {
-		t.Errorf("Expected cost 3.0 for Floor/Door at %v, got %f", p, cost)
-	}
 }
