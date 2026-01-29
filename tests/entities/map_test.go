@@ -1,51 +1,70 @@
 package entities
 
 import (
+	"io"
+	"log"
+	"maps"
 	"testing"
+	"time"
 
 	"github.com/Nikolay-Yakunin/gouge/internal/domain/entity"
 	"github.com/Nikolay-Yakunin/gouge/internal/pkg/geometry"
 )
 
-func TestGenerateLevelNormalGrid(t *testing.T) {
+//
+//
+// --- LEVEL GENERATION LOGIC ---
+//
+//
+
+//
+// -- TOPOLOGY GENERATION TESTS --
+//
+
+// Grid tests
+
+func TestGenerateTopologyNormalGrid(t *testing.T) {
 	m := entity.NewDefaultMap()
-	generated := m.GenerateLevel(3, 3)
+	generated := m.GenerateTopology(3, 3)
 	if !generated {
 		t.Error("Expected true")
 	}
 }
 
-func TestGenerateLevelTooSmallGrid(t *testing.T) {
+func TestGenerateTopologyTooSmallGrid(t *testing.T) {
 	m := entity.NewCustomMap(10, 10)
-	generated := m.GenerateLevel(3, 3)
+	generated := m.GenerateTopology(3, 3)
 	if generated {
 		t.Error("Expected false")
 	}
 }
 
-func TestGenerateLevelZeroGrid(t *testing.T) {
+func TestGenerateTopologyZeroGrid(t *testing.T) {
 	m := entity.NewCustomMap(10, 10)
-	generated := m.GenerateLevel(0, 0)
+	generated := m.GenerateTopology(0, 0)
 	if generated {
 		t.Error("Expected false")
 	}
 }
 
-func TestGenerateLevelNegativeGrid(t *testing.T) {
+func TestGenerateTopologyNegativeGrid(t *testing.T) {
 	m := entity.NewCustomMap(10, 10)
-	generated := m.GenerateLevel(-1, -1)
+	generated := m.GenerateTopology(-1, -1)
 	if generated {
 		t.Error("Expected false")
 	}
 }
 
-func TestGenerateLevelConnectivity(t *testing.T) {
+// Accessibility from entrance to exit test
+func TestGenerateTopologyConnectivity(t *testing.T) {
 	m := entity.NewDefaultMap()
 
 	for range 100 {
-		seed := m.GetSeed()
+		seed := time.Now().UnixNano()
+		m.SetSeed(seed)
 
-		generated := m.GenerateLevel(3, 3)
+		m.ClearTopology()
+		generated := m.GenerateTopology(3, 3)
 
 		entrance := m.GetEntrancePoint()
 		exit := m.GetExitPoint()
@@ -84,9 +103,436 @@ func TestGenerateLevelConnectivity(t *testing.T) {
 	}
 }
 
+//
+// -- OBJECT GENERATION TESTS --
+//
+
+func TestGenerateItems(t *testing.T) {
+	m := entity.NewCustomMap(80, 24)
+	testGenerateObjects(
+		t,
+		m,
+		m.GenerateItems,
+		func(r *entity.Room) map[geometry.Point]struct{} {
+			return r.GetEmptyItemPoints()
+		},
+		m.ClearItems)
+}
+
+func TestGenerateActors(t *testing.T) {
+	m := entity.NewCustomMap(80, 24)
+	testGenerateObjects(t,
+		m,
+		m.GenerateActors,
+		func(r *entity.Room) map[geometry.Point]struct{} {
+			return r.GetEmptyActorPoints()
+		},
+		m.ClearActors)
+}
+
+// Default object generation tests
+// Non-repeating generation tests
+// Non-natural number of objects to generate tests
+// Generation more object than util cells tests
+// Clearing tests
+func testGenerateObjects(t *testing.T,
+	m *entity.Map,
+	genObject func(n int) map[int]geometry.Point,
+	getEmptyPoints func(r *entity.Room) map[geometry.Point]struct{},
+	clearObjects func(),
+) {
+	for range 100 {
+		seed := time.Now().UnixNano()
+		m.SetSeed(seed)
+
+		m.ClearTopology()
+		clearObjects()
+
+		// Correct clearing checks
+		if m.GetEntranceRoom() != nil {
+			t.Errorf("Seed %v: expected nil, got %v", seed, m.GetEntranceRoom())
+		}
+
+		if m.GetExitRoom() != nil {
+			t.Errorf("Seed %v: expected nil, got %v", seed, m.GetExitRoom())
+		}
+
+		for i := 0; i < 24; i++ {
+			for j := 0; j < 80; j++ {
+				p := geometry.Point{X: j, Y: i}
+
+				cellTileGrid, tok := m.GetTileType(p)
+				cellItemGrid, iok := m.GetItemID(p)
+				cellActorGrid, aok := m.GetActorID(p)
+
+				if !tok {
+					t.Errorf("Seed %v: point %v is out of bounds in tileGrid", seed, p)
+				}
+
+				if !iok {
+					t.Errorf("Seed %v: point %v is out of bounds in itemGrid", seed, p)
+				}
+
+				if !aok {
+					t.Errorf("Seed %v: point %v is out of bounds in actorGrid", seed, p)
+				}
+
+				if cellTileGrid != 0 {
+					t.Errorf("Seed %v: expected 0, got %v", seed, cellTileGrid)
+				}
+
+				if cellItemGrid != 0 {
+					t.Errorf("Seed %v: expected 0, got %v", seed, cellItemGrid)
+				}
+				if cellActorGrid != 0 {
+					t.Errorf("Seed %v: expected 0, got %v", seed, cellActorGrid)
+				}
+			}
+		}
+
+		m.GenerateTopology(3, 3)
+
+		availablePoints := make(map[geometry.Point]struct{})
+		for i := 0; i < m.GetRoomsCount(); i++ {
+			room, _ := m.GetRoomByID(i)
+			if room == m.GetEntranceRoom() {
+				continue
+			}
+
+			maps.Copy(availablePoints, getEmptyPoints(room))
+		}
+
+		entrance := m.GetEntrancePoint()
+		exit := m.GetExitPoint()
+
+		// First generation (all cells are available to store firstItems)
+		genObjects := genObject(3)
+
+		if len(genObjects) != 3 {
+			t.Errorf("Seed: %v\nExpected 3 items, got %d", seed, len(genObjects))
+		}
+
+		// Second generation (previous firstItems should stay, new ones shouldn't intersect old ones)
+		maps.Copy(genObjects, genObject(3))
+		if len(genObjects) != 6 {
+			t.Errorf("Seed: %v\nExpected 6 items after 2nd gen, got %d", seed, len(genObjects))
+		}
+
+		// Third generation (check negative n)
+		original := log.Writer() // Temporarily shutting down the logger
+		log.SetOutput(io.Discard)
+
+		noGen1 := genObject(-1)
+		if noGen1 != nil {
+			t.Errorf("Seed: %v\nThere should be no items in the third generation", seed)
+		}
+
+		// Fourth generation (check zero n)
+		noGen2 := genObject(0)
+		if noGen2 != nil {
+			t.Errorf("Seed: %v\nThere should be no items in the fourth generation", seed)
+		}
+
+		log.SetOutput(original) // Turning on the logger back
+
+		// Fifth generation
+		// Generating more items than available cells in the map
+		// Should generate maximum possible number of items
+		// Extras shouldn't appear
+		maps.Copy(genObjects, genObject(80*24))
+		if len(genObjects) != len(availablePoints) {
+			t.Errorf("Seed: %v\nExpected %d items after 5th gen, got %d", seed, availablePoints, len(genObjects))
+		}
+
+		for _, i := range genObjects {
+			if !m.IsWalkable(i) {
+				t.Errorf("Seed: %v\nItem %v should be walkable", seed, i)
+			}
+
+			if _, ok := m.FindPath(entrance, i); !ok {
+				t.Errorf("Seed: %v\nItem %v should be accessible from entrance %v", seed, i, entrance)
+			}
+
+			if _, ok := m.FindPath(exit, i); !ok {
+				t.Errorf("Seed: %v\nItem %v should be accessible from exit %v", seed, i, exit)
+			}
+		}
+
+		genPoints := getValues[int, geometry.Point](genObjects)
+
+		if diff := mapDiff(genPoints, availablePoints); len(diff) != 0 {
+			t.Errorf("Seed %v\nDifference is discovered:\n%v", seed, diff)
+
+		}
+	}
+}
+
+func TestGenerateLevel(t *testing.T) {
+	m := entity.NewDefaultMap()
+	targetItems := 5
+	targetActors := 3
+
+	for range 100 {
+		seed := time.Now().UnixNano()
+		m.SetSeed(seed)
+
+		m.GenerateLevel(targetItems, targetActors)
+
+		//  Verify topology exists
+		if m.GetRoomsCount() == 0 {
+			t.Errorf("Seed %v: no rooms generated", seed)
+		}
+		if m.GetEntranceRoom() == nil || m.GetExitRoom() == nil {
+			t.Errorf("Seed %v: entrance or exit not defined", seed)
+		}
+
+		// Verify objects counts
+		itemCount, actorCount := 0, 0
+		width, height := 80, 24 // Default map size
+
+		for y := range height {
+			for x := range width {
+				p := geometry.Point{X: x, Y: y}
+				if m.IsItem(p) {
+					itemCount++
+				}
+				if m.IsActor(p) {
+					actorCount++
+				}
+			}
+		}
+
+		if itemCount != targetItems {
+			t.Errorf("Seed %v: expected %d items, got %d", seed, targetItems, itemCount)
+		}
+		if actorCount != targetActors {
+			t.Errorf("Seed %v: expected %d actors, got %d", seed, targetActors, actorCount)
+		}
+
+		// Verify connectivity
+		if _, ok := m.FindPath(m.GetEntrancePoint(), m.GetExitPoint()); !ok {
+			t.Errorf("Seed %v: level is not connected", seed)
+		}
+	}
+}
+
+//
+//
+// --- LOOT MANAGEMENT TESTS ---
+//
+//
+
+func TestLootSystem(t *testing.T) {
+	m := entity.NewDefaultMap()
+	m.GenerateTopology(3, 3)
+
+	// Ensure we have a valid room and point
+	var room *entity.Room
+	for i := 0; i < m.GetRoomsCount(); i++ {
+		if r, _ := m.GetRoomByID(i); len(r.GetEmptyItemPoints()) > 1 {
+			room = r
+		}
+	}
+
+	if room == nil {
+		t.Errorf("Can't find room with at least 2 free points")
+		return
+	}
+
+	center := room.GetCenter()
+
+	t.Run("SpawnLootSuccess", func(t *testing.T) {
+		// Attempt to spawn loot near center
+		id, pos, ok := m.SpawnLoot(center, 5)
+
+		if !ok {
+			t.Errorf("Failed to spawn loot in valid room")
+		}
+
+		if pos != center {
+			t.Errorf("SpawnLoot: expected point %v, got %v", center, pos)
+		}
+
+		if id == 0 {
+			t.Error("Expected valid ID > 0")
+		}
+
+		if !m.IsItem(pos) {
+			t.Errorf("Item grid not updated at %v", pos)
+		}
+
+		if !m.IsWalkable(pos) {
+			t.Errorf("Loot spawned on non-walkable tile %v", pos)
+		}
+	})
+
+	t.Run("SpawnLootInvalidCenter", func(t *testing.T) {
+		// Use logger discard to suppress expected error output
+		original := log.Writer()
+		log.SetOutput(io.Discard)
+		defer log.SetOutput(original)
+
+		wall := geometry.Point{X: 0, Y: 0}
+		if _, _, ok := m.SpawnLoot(wall, -1); ok {
+			t.Error("Should not spawn loot from non-walkable center")
+		}
+	})
+
+	t.Run("FindLootPointLogic", func(t *testing.T) {
+		// Should spawn loot not in the given point
+		m.SetItem(center, 1)
+		p, found := m.FindLootPoint(center, 10)
+		if !found {
+			t.Errorf("Should find point in empty room")
+		}
+
+		if p == center {
+			t.Errorf("Point %v should be different from %v", p, center)
+		}
+	})
+
+	t.Run("ImpossibleToSpawn", func(t *testing.T) {
+		for p := range room.GetEmptyItemPoints() {
+			m.SetItem(p, 1)
+		}
+
+		if len(room.GetEmptyItemPoints()) > 0 {
+			t.Errorf("Should be no available points in the room, got %v available points", len(room.GetEmptyItemPoints()))
+		}
+
+		_, found := m.FindLootPoint(center, 10)
+		if found {
+			t.Errorf("Should not find point in full room, rad: 10")
+		}
+
+		_, found = m.FindLootPoint(center, -1)
+		if found {
+			t.Errorf("Should not find point in full room, rad: -1")
+		}
+	})
+}
+
+//
+//
+// --- PATHFINDING INTERFACE TESTS ---
+//
+//
+
+func TestPathfindingInterface(t *testing.T) {
+	m := entity.NewDefaultMap()
+	m.GenerateTopology(2, 2)
+
+	start := m.GetEntrancePoint()
+	end := m.GetExitPoint()
+
+	t.Run("FindPathBasic", func(t *testing.T) {
+		path, ok := m.FindPath(start, end)
+
+		if !ok {
+			t.Errorf("Path should exist on generated map")
+		}
+		if len(path) == 0 {
+			t.Errorf("Path should not be empty")
+		}
+
+		// Verify path continuity
+		for i := 0; i < len(path)-1; i++ {
+			curr, next := path[i], path[i+1]
+			dist := m.CalcHeuristic(curr, next)
+			if dist != 1.0 {
+				t.Errorf("Path gap between %v and %v", curr, next)
+			}
+		}
+	})
+
+	t.Run("GetNeighbors", func(t *testing.T) {
+		neighbors := m.GetNeighbors(start)
+		if len(neighbors) == 0 {
+			t.Error("Walkable point should have neighbors")
+		}
+		for _, n := range neighbors {
+			if !m.InBounds(n) {
+				t.Errorf("Neighbor %v out of bounds", n)
+			}
+		}
+	})
+
+	t.Run("PathEdgeCases", func(t *testing.T) {
+		// Path to self
+		path, ok := m.FindPath(start, start)
+		if !ok || len(path) != 1 {
+			t.Error("Path to self should contain 1 point")
+		}
+
+		// Path to wall
+		wall := geometry.Point{X: 0, Y: 0} // Assumed wall
+		if _, ok := m.FindPath(start, wall); ok {
+			t.Error("Should not find path to wall")
+		}
+	})
+}
+
+//
+//
+// --- GETTERS TESTS ---
+//
+//
+
+func TestMapBounds(t *testing.T) {
+	width, height := 80, 24
+	m := entity.NewCustomMap(width, height)
+
+	testCases := []struct {
+		name     string
+		point    geometry.Point
+		expected bool
+	}{
+		{"TopLeft", geometry.Point{X: 0, Y: 0}, true},
+		{"BottomRight", geometry.Point{X: width - 1, Y: height - 1}, true},
+		{"NegativeX", geometry.Point{X: -1, Y: 10}, false},
+		{"OutOfBoundsY", geometry.Point{X: 10, Y: height}, false},
+	}
+
+	for _, tc := range testCases {
+		if res := m.InBounds(tc.point); res != tc.expected {
+			t.Errorf("%s: InBounds(%v) = %v, want %v", tc.name, tc.point, res, tc.expected)
+		}
+	}
+}
+
+func TestRoomGetters(t *testing.T) {
+	m := entity.NewDefaultMap()
+	m.GenerateTopology(2, 2)
+
+	t.Run("GetRoomByPoint", func(t *testing.T) {
+		room, ok := m.GetRoomByID(0)
+		if !ok {
+			t.Fatal("Room with ID 0 should exist")
+		}
+
+		foundRoom, foundOk := m.GetRoomByPoint(room.GetCenter())
+		if !foundOk || foundRoom.GetID() != room.GetID() {
+			t.Errorf("Failed to find room by its center point")
+		}
+	})
+
+	t.Run("NonExistentRoom", func(t *testing.T) {
+		_, ok := m.GetRoomByID(999)
+		if ok {
+			t.Error("Should not find room with invalid ID")
+		}
+	})
+}
+
+//
+//
+// --- SETTERS TESTS ---
+//
+//
+
 func TestMapEntities(t *testing.T) {
 	m := entity.NewCustomMap(10, 10)
-	m.GenerateLevel(1, 1)
+	m.GenerateTopology(1, 1)
 
 	room := m.GetEntranceRoom()
 	center := room.GetCenter()
@@ -112,55 +558,219 @@ func TestMapEntities(t *testing.T) {
 	t.Run("SetOnNonWalkableTile", func(t *testing.T) {
 		wallPos := geometry.Point{X: 0, Y: 0}
 		m.SetActor(wallPos, 99)
-		id, ok := m.GetActorID(wallPos)
-		if ok || id != 0 {
+		id, _ := m.GetActorID(wallPos)
+		if id != 0 {
 			t.Errorf("Should not be able to set actor on non-walkable tile")
 		}
 	})
 }
 
-func TestMapBoundsAndWalkability(t *testing.T) {
-	width, height := 80, 24
-	m := entity.NewCustomMap(width, height)
+//
+//
+// --- MUTATORS TESTS ---
+//
+//
 
-	testCases := []struct {
-		name     string
-		point    geometry.Point
-		expected bool
-	}{
-		{"TopLeft", geometry.Point{X: 0, Y: 0}, true},
-		{"BottomRight", geometry.Point{X: width - 1, Y: height - 1}, true},
-		{"NegativeX", geometry.Point{X: -1, Y: 10}, false},
-		{"OutOfBoundsY", geometry.Point{X: 10, Y: height}, false},
+func TestIDGenerationSequence(t *testing.T) {
+	m := entity.NewDefaultMap()
+
+	// Check sequentiality
+	id1 := m.GenID()
+	id2 := m.GenID()
+	id3 := m.GenID()
+
+	if id1 == id2 || id2 == id3 {
+		t.Error("GenID produced duplicate values")
 	}
-
-	for _, tc := range testCases {
-		if res := m.InBounds(tc.point); res != tc.expected {
-			t.Errorf("%s: InBounds(%v) = %v, want %v", tc.name, tc.point, res, tc.expected)
-		}
+	if id2 != id1+1 || id3 != id2+1 {
+		t.Error("GenID is not incremental")
 	}
 }
 
-func TestRoomQueries(t *testing.T) {
+func TestMutatorsAndRandomPickers(t *testing.T) {
 	m := entity.NewDefaultMap()
-	m.GenerateLevel(2, 2)
+	m.GenerateTopology(2, 2)
+	room := m.GetEntranceRoom()
 
-	t.Run("GetRoomByPoint", func(t *testing.T) {
-		room, ok := m.GetRoomByID(0)
+	t.Run("RandomPoints", func(t *testing.T) {
+		// Take random item point
+		p1, ok := m.TakeRandomItemPoint(room)
 		if !ok {
-			t.Fatal("Room with ID 0 should exist")
+			t.Errorf("Should find empty item point in new room")
+		}
+		// Verify point is actually in the room
+		if r, _ := m.GetRoomByPoint(p1); r != room {
+			t.Errorf("Point %v belongs to wrong room", p1)
 		}
 
-		foundRoom, foundOk := m.GetRoomByPoint(room.GetCenter())
-		if !foundOk || foundRoom.GetID() != room.GetID() {
-			t.Errorf("Failed to find room by its center point")
+		// Take random actor point
+		p2, ok := m.TakeRandomActorPoint(room)
+		if !ok {
+			t.Errorf("Should find empty actor point in new room")
+		}
+		if !m.IsWalkable(p2) {
+			t.Errorf("Random actor point %v should be walkable", p2)
 		}
 	})
 
-	t.Run("NonExistentRoom", func(t *testing.T) {
-		_, ok := m.GetRoomByID(999)
-		if ok {
-			t.Error("Should not find room with invalid ID")
+	t.Run("RemoveItem", func(t *testing.T) {
+		p := room.GetCenter()
+
+		// Setup item
+		m.SetItem(p, 100)
+		if !m.IsItem(p) {
+			t.Errorf("Setup failed: item not set")
+		}
+
+		// Test Remove
+		if !m.RemoveItem(p) {
+			t.Error("RemoveItem returned false")
+		}
+		if m.IsItem(p) {
+			t.Error("Item should be removed")
+		}
+
+		// Verify internal room map updated (item can be placed again)
+		// SetItem returns true only if it can place (logic inside SetItem handles map update)
+		// We verify state by checking ID
+		id, _ := m.GetItemID(p)
+		if id != 0 {
+			t.Errorf("Expected ID 0 after removal, got %d", id)
+		}
+
+		m.SetItem(p, 100)
+		if !m.IsItem(p) {
+			t.Errorf("Setup failed: item not set")
 		}
 	})
+
+	t.Run("RemoveActor", func(t *testing.T) {
+		p := room.GetCenter()
+
+		// Setup actor
+		m.SetActor(p, 100)
+		if !m.IsActor(p) {
+			t.Errorf("Setup failed: actor not set")
+		}
+
+		// Test Remove
+		if !m.RemoveActor(p) {
+			t.Errorf("RemoveActor returned false")
+		}
+		if m.IsActor(p) {
+			t.Error("Actor should be removed")
+		}
+
+		// Verify internal room map updated (actor can be placed again)
+		// SetActor returns true only if it can place (logic inside SetItem handles map update)
+		// We verify state by checking ID
+		id, _ := m.GetActorID(p)
+		if id != 0 {
+			t.Errorf("Expected ID 0 after removal, got %d", id)
+		}
+
+		m.SetActor(p, 100)
+		if !m.IsActor(p) {
+			t.Errorf("Setup failed: actor not set")
+		}
+	})
+
+	t.Run("ItemAndActorInSamePoint", func(t *testing.T) {
+		p := room.GetCenter()
+
+		m.SetItem(p, 100)
+		if !m.IsItem(p) {
+			t.Errorf("Setup failed: item not set")
+		}
+
+		m.SetActor(p, 100)
+		if !m.IsActor(p) {
+			t.Errorf("Setup failed: actor not set")
+		}
+
+		if !m.RemoveActor(p) {
+			t.Errorf("RemoveActor returned false")
+		}
+		if m.IsActor(p) {
+			t.Errorf("Actor should be removed")
+		}
+		if !m.IsItem(p) {
+			t.Errorf("Item should stay after actor removal")
+		}
+	})
+}
+
+//
+//
+// -- STABILITY & DETERMINISM TESTS --
+//
+//
+
+// TODO: Need to think about fixing random behaviour of takeRandomPoint function
+func TestMapDeterminism(t *testing.T) {
+	// Seed must guarantee identical map generation
+	seed := int64(12345)
+
+	// Map A
+	mA := entity.NewDefaultMap()
+	mA.SetSeed(seed)
+	mA.GenerateLevel(5, 5)
+	strA := mA.String() // String representation captures topology
+
+	// Map B
+	mB := entity.NewDefaultMap()
+	mB.SetSeed(seed)
+	mB.GenerateLevel(5, 5)
+	strB := mB.String()
+
+	if strA != strB {
+		t.Error("Maps with same seed differ in topology")
+	}
+
+	// Compare object positions
+	pA := mA.GetEntrancePoint()
+	pB := mB.GetEntrancePoint()
+	if pA != pB {
+		t.Errorf("Entrance points differ: %v vs %v", pA, pB)
+	}
+
+	// Map C (different seed)
+	mC := entity.NewDefaultMap()
+	mC.SetSeed(seed + 1)
+	mC.GenerateLevel(5, 5)
+	if mA.String() == mC.String() {
+		t.Error("Maps with different seeds are identical")
+	}
+}
+
+//
+//
+// --- HELPERS & UTILITIES ---
+//
+//
+
+func getValues[K, V comparable](kv map[K]V) map[V]struct{} {
+	vals := make(map[V]struct{}, len(kv))
+	for _, v := range kv {
+		vals[v] = struct{}{}
+	}
+	return vals
+}
+
+func mapDiff[K comparable, V any](m1, m2 map[K]V) map[K]V {
+	diff := make(map[K]V, len(m1)+len(m2))
+
+	for k, v := range m1 {
+		if _, ok := m2[k]; !ok {
+			diff[k] = v
+		}
+	}
+
+	for k, v := range m2 {
+		if _, ok := m1[k]; !ok {
+			diff[k] = v
+		}
+	}
+
+	return diff
 }
