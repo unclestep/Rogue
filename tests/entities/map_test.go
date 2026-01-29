@@ -113,7 +113,7 @@ func TestGenerateItems(t *testing.T) {
 		t,
 		m,
 		m.GenerateItems,
-		func(r *entity.Room) map[geometry.Point]struct{} {
+		func(r *entity.Room) []geometry.Point {
 			return r.GetEmptyItemPoints()
 		},
 		m.ClearItems)
@@ -124,7 +124,7 @@ func TestGenerateActors(t *testing.T) {
 	testGenerateObjects(t,
 		m,
 		m.GenerateActors,
-		func(r *entity.Room) map[geometry.Point]struct{} {
+		func(r *entity.Room) []geometry.Point {
 			return r.GetEmptyActorPoints()
 		},
 		m.ClearActors)
@@ -138,7 +138,7 @@ func TestGenerateActors(t *testing.T) {
 func testGenerateObjects(t *testing.T,
 	m *entity.Map,
 	genObject func(n int) map[int]geometry.Point,
-	getEmptyPoints func(r *entity.Room) map[geometry.Point]struct{},
+	getEmptyPoints func(r *entity.Room) []geometry.Point,
 	clearObjects func(),
 ) {
 	for range 100 {
@@ -192,14 +192,14 @@ func testGenerateObjects(t *testing.T,
 
 		m.GenerateTopology(3, 3)
 
-		availablePoints := make(map[geometry.Point]struct{})
+		availablePoints := make([]geometry.Point, 0, 80*24)
 		for i := 0; i < m.GetRoomsCount(); i++ {
 			room, _ := m.GetRoomByID(i)
 			if room == m.GetEntranceRoom() {
 				continue
 			}
 
-			maps.Copy(availablePoints, getEmptyPoints(room))
+			availablePoints = append(availablePoints, getEmptyPoints(room)...)
 		}
 
 		entrance := m.GetEntrancePoint()
@@ -241,7 +241,7 @@ func testGenerateObjects(t *testing.T,
 		// Extras shouldn't appear
 		maps.Copy(genObjects, genObject(80*24))
 		if len(genObjects) != len(availablePoints) {
-			t.Errorf("Seed: %v\nExpected %d items after 5th gen, got %d", seed, availablePoints, len(genObjects))
+			t.Errorf("Seed: %v\nExpected %d items after 5th gen, got %d", seed, len(availablePoints), len(genObjects))
 		}
 
 		for _, i := range genObjects {
@@ -258,10 +258,11 @@ func testGenerateObjects(t *testing.T,
 			}
 		}
 
-		genPoints := getValues[int, geometry.Point](genObjects)
+		genPointsSet := getValues(genObjects)
+		availablePointsSet := sliceToSet(availablePoints)
 
-		if diff := mapDiff(genPoints, availablePoints); len(diff) != 0 {
-			t.Errorf("Seed %v\nDifference is discovered:\n%v", seed, diff)
+		if diff := mapDiff(genPointsSet, availablePointsSet); len(diff) > 0 {
+			t.Errorf("Seed %v\nGenerated points are not equal initially available points\nDiff:%v\n", seed, diff)
 
 		}
 	}
@@ -392,7 +393,7 @@ func TestLootSystem(t *testing.T) {
 	})
 
 	t.Run("ImpossibleToSpawn", func(t *testing.T) {
-		for p := range room.GetEmptyItemPoints() {
+		for _, p := range room.GetEmptyItemPoints() {
 			m.SetItem(p, 1)
 		}
 
@@ -596,7 +597,7 @@ func TestMutatorsAndRandomPickers(t *testing.T) {
 		// Take random item point
 		p1, ok := m.TakeRandomItemPoint(room)
 		if !ok {
-			t.Errorf("Should find empty item point in new room")
+			t.Errorf("Should be available points to spawn an item")
 		}
 		// Verify point is actually in the room
 		if r, _ := m.GetRoomByPoint(p1); r != room {
@@ -606,7 +607,7 @@ func TestMutatorsAndRandomPickers(t *testing.T) {
 		// Take random actor point
 		p2, ok := m.TakeRandomActorPoint(room)
 		if !ok {
-			t.Errorf("Should find empty actor point in new room")
+			t.Errorf("Should be available points to spawn an item")
 		}
 		if !m.IsWalkable(p2) {
 			t.Errorf("Random actor point %v should be walkable", p2)
@@ -706,7 +707,6 @@ func TestMutatorsAndRandomPickers(t *testing.T) {
 //
 //
 
-// TODO: Need to think about fixing random behaviour of takeRandomPoint function
 func TestMapDeterminism(t *testing.T) {
 	// Seed must guarantee identical map generation
 	seed := int64(12345)
@@ -755,6 +755,14 @@ func getValues[K, V comparable](kv map[K]V) map[V]struct{} {
 		vals[v] = struct{}{}
 	}
 	return vals
+}
+
+func sliceToSet[T comparable](s []T) map[T]struct{} {
+	set := make(map[T]struct{}, len(s))
+	for _, v := range s {
+		set[v] = struct{}{}
+	}
+	return set
 }
 
 func mapDiff[K comparable, V any](m1, m2 map[K]V) map[K]V {

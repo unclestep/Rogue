@@ -7,6 +7,7 @@ import (
 	"maps"
 	"math"
 	"math/rand"
+	"slices"
 	"strings"
 
 	"github.com/Nikolay-Yakunin/gouge/internal/pkg/algorithm"
@@ -81,13 +82,15 @@ const (
 
 // Room - structure for room entity
 type Room struct {
-	id               int
-	pos              geometry.Point // Left-upper corner
-	width, height    int
-	center           geometry.Point
-	doors            []geometry.Point
-	emptyItemPoints  map[geometry.Point]struct{}
-	emptyActorPoints map[geometry.Point]struct{}
+	id                    int
+	pos                   geometry.Point // Left-upper corner
+	width, height         int
+	center                geometry.Point
+	doors                 []geometry.Point
+	emptyItemPoints       []geometry.Point
+	emptyItemPointsIndex  map[geometry.Point]int
+	emptyActorPoints      []geometry.Point
+	emptyActorPointsIndex map[geometry.Point]int
 }
 
 // Room constants
@@ -230,9 +233,9 @@ func (m *Map) SetItem(p geometry.Point, id int) bool {
 	room, _ := m.GetRoomByPoint(p)
 
 	if id == 0 {
-		room.emptyItemPoints[p] = struct{}{}
+		room.addItemPoint(p)
 	} else {
-		delete(room.emptyItemPoints, p)
+		room.removeItemPoint(p)
 	}
 
 	return true
@@ -249,9 +252,9 @@ func (m *Map) SetActor(p geometry.Point, id int) bool {
 	room, _ := m.GetRoomByPoint(p)
 
 	if id == 0 {
-		room.emptyActorPoints[p] = struct{}{}
+		room.addItemPoint(p)
 	} else {
-		delete(room.emptyActorPoints, p)
+		room.removeItemPoint(p)
 	}
 
 	return true
@@ -281,25 +284,67 @@ func (m *Map) RemoveActor(p geometry.Point) bool {
 	return m.SetActor(p, 0)
 }
 
-func (m *Map) TakeRandomItemPoint(room *Room) (geometry.Point, bool) {
-	return m.takeRandomPoint(room.emptyItemPoints)
+func (m *Map) TakeRandomItemPoint(r *Room) (geometry.Point, bool) {
+	return m.takeRandomPoint(r.emptyItemPoints, r.removeItemPoint)
 }
 
-func (m *Map) TakeRandomActorPoint(room *Room) (geometry.Point, bool) {
-	return m.takeRandomPoint(room.emptyActorPoints)
+func (m *Map) TakeRandomActorPoint(r *Room) (geometry.Point, bool) {
+	return m.takeRandomPoint(r.emptyActorPoints, r.removeActorPoint)
 }
 
-func (m *Map) takeRandomPoint(points map[geometry.Point]struct{}) (geometry.Point, bool) {
+func (m *Map) takeRandomPoint(points []geometry.Point, removeFunc func(p geometry.Point)) (geometry.Point, bool) {
 	if len(points) == 0 {
 		return geometry.Point{}, false
 	}
 
-	for point := range points {
-		delete(points, point)
-		return point, true
+	point := points[m.rand.Intn(len(points))]
+	removeFunc(point)
+
+	return point, true
+}
+
+func (r *Room) addItemPoint(p geometry.Point) {
+	addPoint(p, &r.emptyItemPoints, r.emptyItemPointsIndex)
+}
+
+func (r *Room) addActorPoint(p geometry.Point) {
+	addPoint(p, &r.emptyActorPoints, r.emptyActorPointsIndex)
+}
+
+func addPoint(p geometry.Point, s *[]geometry.Point, m map[geometry.Point]int) {
+	if _, ok := m[p]; ok {
+		return
 	}
 
-	return geometry.Point{}, false
+	*s = append(*s, p)
+	m[p] = len(*s) - 1
+}
+
+func (r *Room) removeItemPoint(p geometry.Point) {
+	removePoint(p, &r.emptyItemPoints, r.emptyItemPointsIndex)
+}
+
+func (r *Room) removeActorPoint(p geometry.Point) {
+	removePoint(p, &r.emptyActorPoints, r.emptyActorPointsIndex)
+}
+
+func removePoint(p geometry.Point, s *[]geometry.Point, m map[geometry.Point]int) {
+	removable, exists := m[p]
+
+	if !exists {
+		return
+	}
+
+	// Get last
+	lastInd := len(*s) - 1
+	lastPoint := (*s)[lastInd]
+
+	(*s)[removable] = lastPoint // Overwrite removable point by last point
+	m[lastPoint] = removable    // Update index in the map
+
+	// Reduce slice size and remove point from map
+	*s = (*s)[:lastInd]
+	delete(m, p)
 }
 
 //
@@ -339,15 +384,15 @@ func (m *Map) ClearItems() {
 	clearMatrix(m.itemGrid)
 
 	for _, room := range m.rooms {
-		m.updateRoomEmptyPoints(room, func() map[geometry.Point]struct{} { return room.emptyItemPoints }, m.itemGrid)
+		m.updateRoomEmptyPoints(room, room.addItemPoint, m.itemGrid)
 	}
 
 	if m.entranceRoom != nil {
-		delete(m.entranceRoom.emptyItemPoints, m.entrancePoint)
+		delete(m.entranceRoom.emptyItemPointsIndex, m.entrancePoint)
 	}
 
 	if m.exitRoom != nil {
-		delete(m.exitRoom.emptyItemPoints, m.exitPoint)
+		delete(m.exitRoom.emptyItemPointsIndex, m.exitPoint)
 	}
 }
 
@@ -355,15 +400,15 @@ func (m *Map) ClearActors() {
 	clearMatrix(m.actorGrid)
 
 	for _, room := range m.rooms {
-		m.updateRoomEmptyPoints(room, func() map[geometry.Point]struct{} { return room.emptyActorPoints }, m.actorGrid)
+		m.updateRoomEmptyPoints(room, room.addActorPoint, m.actorGrid)
 	}
 
 	if m.entranceRoom != nil {
-		delete(m.entranceRoom.emptyActorPoints, m.entrancePoint)
+		delete(m.entranceRoom.emptyActorPointsIndex, m.entrancePoint)
 	}
 
 	if m.exitRoom != nil {
-		delete(m.exitRoom.emptyActorPoints, m.exitPoint)
+		delete(m.exitRoom.emptyActorPointsIndex, m.exitPoint)
 	}
 }
 
@@ -464,6 +509,7 @@ func (m *Map) createRooms(sectors [][]Sector) {
 			sectorWidth := xMax - xMin
 			roomHeight := minHeight + m.rand.Intn(sectorHeight-minHeight+1)
 			roomWidth := minWidth + m.rand.Intn(sectorWidth-minWidth+1)
+			utilSquare := (roomHeight - 2) * (roomWidth - 2)
 
 			// Pick random pos (left-upper corner)
 			allowedYMax := yMax - roomHeight
@@ -481,11 +527,14 @@ func (m *Map) createRooms(sectors [][]Sector) {
 					X: posX + roomWidth/2,
 					Y: posY + roomHeight/2,
 				},
-				emptyItemPoints:  make(map[geometry.Point]struct{}),
-				emptyActorPoints: make(map[geometry.Point]struct{}),
+				emptyItemPoints:       make([]geometry.Point, 0, utilSquare),
+				emptyItemPointsIndex:  make(map[geometry.Point]int, utilSquare),
+				emptyActorPoints:      make([]geometry.Point, 0, utilSquare),
+				emptyActorPointsIndex: make(map[geometry.Point]int, utilSquare),
 			}
-			m.updateRoomEmptyPoints(room, func() map[geometry.Point]struct{} { return room.emptyItemPoints }, m.itemGrid)
-			room.emptyActorPoints = maps.Clone(room.emptyItemPoints)
+			m.updateRoomEmptyPoints(room, room.addItemPoint, m.itemGrid)
+			room.emptyActorPoints = slices.Clone(room.emptyItemPoints)
+			room.emptyActorPointsIndex = maps.Clone(room.emptyItemPointsIndex)
 			m.rooms[row*cols+col] = room
 		}
 	}
@@ -521,8 +570,8 @@ func (m *Map) createEntranceAndExit() {
 	m.tileGrid[m.exitPoint.Y][m.exitPoint.X].Type = Exit
 
 	// Prohibit actor spawn at entrance and exit point
-	delete(m.entranceRoom.emptyItemPoints, m.entrancePoint)
-	delete(m.exitRoom.emptyActorPoints, m.exitPoint)
+	m.entranceRoom.removeActorPoint(m.entrancePoint)
+	m.exitRoom.removeActorPoint(m.exitPoint)
 }
 
 func (m *Map) connectRooms() {
@@ -593,11 +642,11 @@ func (m *Map) getDiggingCost(p geometry.Point) float64 {
 }
 
 func (m *Map) GenerateItems(n int) map[int]geometry.Point {
-	return m.generateObjects(n, m.itemGrid, func(r *Room) int { return len(r.emptyItemPoints) }, m.TakeRandomItemPoint)
+	return m.generateObjects(n, m.itemGrid, func(r *Room) int { return len(r.emptyItemPointsIndex) }, m.TakeRandomItemPoint)
 }
 
 func (m *Map) GenerateActors(n int) map[int]geometry.Point {
-	return m.generateObjects(n, m.actorGrid, func(r *Room) int { return len(r.emptyActorPoints) }, m.TakeRandomActorPoint)
+	return m.generateObjects(n, m.actorGrid, func(r *Room) int { return len(r.emptyActorPointsIndex) }, m.TakeRandomActorPoint)
 }
 
 func (m *Map) generateObjects(n int, grid [][]int, getRoomCapacity func(*Room) int, getRandomPoint func(*Room) (geometry.Point, bool)) map[int]geometry.Point {
@@ -890,15 +939,14 @@ func shuffle[T any](r *rand.Rand, s []T) {
 	})
 }
 
-func (m *Map) updateRoomEmptyPoints(room *Room, getRoomEmptyPoints func() map[geometry.Point]struct{}, grid [][]int) {
+func (m *Map) updateRoomEmptyPoints(room *Room, addPoint func(p geometry.Point), grid [][]int) {
 	utilX, utilY := room.pos.X+1, room.pos.Y+1
 	utilHeight, utilWidth := room.height-2, room.width-2
-	emptyPoints := getRoomEmptyPoints()
 
 	for i := utilY; i < utilY+utilHeight; i++ {
 		for j := utilX; j < utilX+utilWidth; j++ {
 			if grid[i][j] == 0 {
-				emptyPoints[geometry.Point{X: j, Y: i}] = struct{}{}
+				addPoint(geometry.Point{X: j, Y: i})
 			}
 		}
 	}
@@ -1009,10 +1057,18 @@ func (r *Room) GetCenter() geometry.Point {
 	return r.center
 }
 
-func (r *Room) GetEmptyItemPoints() map[geometry.Point]struct{} {
-	return maps.Clone(r.emptyItemPoints)
+func (r *Room) GetEmptyItemPoints() []geometry.Point {
+	return slices.Clone(r.emptyItemPoints)
 }
 
-func (r *Room) GetEmptyActorPoints() map[geometry.Point]struct{} {
-	return maps.Clone(r.emptyActorPoints)
+func (r *Room) GetEmptyItemPointsIndex() map[geometry.Point]int {
+	return maps.Clone(r.emptyItemPointsIndex)
+}
+
+func (r *Room) GetEmptyActorPoints() []geometry.Point {
+	return slices.Clone(r.emptyActorPoints)
+}
+
+func (r *Room) GetEmptyActorPointsIndex() map[geometry.Point]int {
+	return maps.Clone(r.emptyActorPointsIndex)
 }
