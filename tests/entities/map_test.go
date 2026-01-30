@@ -325,92 +325,101 @@ func TestGenerateLevel(t *testing.T) {
 
 func TestLootSystem(t *testing.T) {
 	m := entity.NewDefaultMap()
-	m.GenerateTopology(3, 3)
 
-	// Ensure we have a valid room and point
-	var room *entity.Room
-	for i := 0; i < m.GetRoomsCount(); i++ {
-		if r, _ := m.GetRoomByID(i); len(r.GetEmptyItemPoints()) > 1 {
-			room = r
+	for i := 0; i < 100; i++ {
+		seed := time.Now().UnixNano()
+		m.SetSeed(seed + int64(i))
+
+		m.ClearLevel()
+		m.GenerateTopology(3, 3)
+
+		// Ensure we have a valid room and point
+		var room *entity.Room
+		for i := 0; i < m.GetRoomsCount(); i++ {
+			if r, _ := m.GetRoomByID(i); len(r.GetEmptyItemPoints()) > 1 && r != m.GetEntranceRoom() {
+				room = r
+			}
 		}
+
+		if room == nil {
+			t.Fatalf("Seed: %v\nCan't find room with at least 2 free points", seed)
+			return
+		}
+
+		center := room.GetCenter()
+
+		t.Run("SpawnLootSuccess", func(t *testing.T) {
+			// Attempt to spawn loot near center
+			id, pos, ok := m.SpawnLoot(center, 5)
+
+			if !ok {
+				t.Errorf("Seed: %v\nFailed to spawn loot in valid room", seed)
+			}
+
+			if pos != center {
+				t.Errorf("Seed: %v\nSpawnLoot: expected point %v, got %v", seed, center, pos)
+			}
+
+			if id == 0 {
+				t.Errorf("Seed: %v\nExpected valid ID > 0", seed)
+			}
+
+			if !m.IsItem(pos) {
+				t.Errorf("Seed: %v\nItem grid not updated at %v", seed, pos)
+			}
+
+			if !m.IsWalkable(pos) {
+				t.Errorf("Seed: %v\nLoot spawned on non-walkable tile %v", seed, pos)
+			}
+		})
+
+		t.Run("SpawnLootInvalidCenter", func(t *testing.T) {
+			// Use logger discard to suppress expected error output
+			original := log.Writer()
+			log.SetOutput(io.Discard)
+			defer log.SetOutput(original)
+
+			wall := geometry.Point{X: 0, Y: 0}
+			if _, _, ok := m.SpawnLoot(wall, -1); ok {
+				t.Errorf("Seed: %v\nShould not spawn loot from non-walkable center", seed)
+			}
+		})
+
+		t.Run("FindLootPointLogic", func(t *testing.T) {
+			// Should spawn loot not in the given point
+			m.SetItem(center, 1)
+			p, found := m.FindLootPoint(center, 10)
+			if !found {
+				t.Errorf("Seed: %v\nShould find point in empty room", seed)
+			}
+
+			if p == center {
+				t.Errorf("Seed: %v\nPoint %v should be different from %v", seed, p, center)
+			}
+		})
+
+		t.Run("ImpossibleToSpawn", func(t *testing.T) {
+			for _, p := range room.GetEmptyItemPoints() {
+				m.SetItem(p, 1)
+			}
+
+			if len(room.GetEmptyItemPoints()) > 0 {
+				t.Errorf("Seed: %v\nShould be no available points in the room, got %v available points", seed, len(room.GetEmptyItemPoints()))
+			}
+
+			p, found := m.FindLootPoint(center, 10)
+			if found {
+				t.Errorf("Seed: %v\nShould not find point in full room with rad=10, but found point %v", seed, p)
+				t.Errorf("\nPlayer position: %v", m.GetEntrancePoint())
+			}
+
+			p, found = m.FindLootPoint(center, -1)
+			if found {
+				t.Errorf("Seed: %v\nShould not find point in full room with rad=-1, but found point %v", seed, p)
+			}
+		})
 	}
 
-	if room == nil {
-		t.Errorf("Can't find room with at least 2 free points")
-		return
-	}
-
-	center := room.GetCenter()
-
-	t.Run("SpawnLootSuccess", func(t *testing.T) {
-		// Attempt to spawn loot near center
-		id, pos, ok := m.SpawnLoot(center, 5)
-
-		if !ok {
-			t.Errorf("Failed to spawn loot in valid room")
-		}
-
-		if pos != center {
-			t.Errorf("SpawnLoot: expected point %v, got %v", center, pos)
-		}
-
-		if id == 0 {
-			t.Error("Expected valid ID > 0")
-		}
-
-		if !m.IsItem(pos) {
-			t.Errorf("Item grid not updated at %v", pos)
-		}
-
-		if !m.IsWalkable(pos) {
-			t.Errorf("Loot spawned on non-walkable tile %v", pos)
-		}
-	})
-
-	t.Run("SpawnLootInvalidCenter", func(t *testing.T) {
-		// Use logger discard to suppress expected error output
-		original := log.Writer()
-		log.SetOutput(io.Discard)
-		defer log.SetOutput(original)
-
-		wall := geometry.Point{X: 0, Y: 0}
-		if _, _, ok := m.SpawnLoot(wall, -1); ok {
-			t.Error("Should not spawn loot from non-walkable center")
-		}
-	})
-
-	t.Run("FindLootPointLogic", func(t *testing.T) {
-		// Should spawn loot not in the given point
-		m.SetItem(center, 1)
-		p, found := m.FindLootPoint(center, 10)
-		if !found {
-			t.Errorf("Should find point in empty room")
-		}
-
-		if p == center {
-			t.Errorf("Point %v should be different from %v", p, center)
-		}
-	})
-
-	t.Run("ImpossibleToSpawn", func(t *testing.T) {
-		for _, p := range room.GetEmptyItemPoints() {
-			m.SetItem(p, 1)
-		}
-
-		if len(room.GetEmptyItemPoints()) > 0 {
-			t.Errorf("Should be no available points in the room, got %v available points", len(room.GetEmptyItemPoints()))
-		}
-
-		_, found := m.FindLootPoint(center, 10)
-		if found {
-			t.Errorf("Should not find point in full room, rad: 10")
-		}
-
-		_, found = m.FindLootPoint(center, -1)
-		if found {
-			t.Errorf("Should not find point in full room, rad: -1")
-		}
-	})
 }
 
 //
@@ -508,7 +517,7 @@ func TestRoomGetters(t *testing.T) {
 	t.Run("GetRoomByPoint", func(t *testing.T) {
 		room, ok := m.GetRoomByID(0)
 		if !ok {
-			t.Fatal("Room with ID 0 should exist")
+			t.Errorf("Room with ID 0 should exist")
 		}
 
 		foundRoom, foundOk := m.GetRoomByPoint(room.GetCenter())
@@ -590,115 +599,172 @@ func TestIDGenerationSequence(t *testing.T) {
 
 func TestMutatorsAndRandomPickers(t *testing.T) {
 	m := entity.NewDefaultMap()
-	m.GenerateTopology(2, 2)
-	room := m.GetEntranceRoom()
 
-	t.Run("RandomPoints", func(t *testing.T) {
-		// Take random item point
-		p1, ok := m.TakeRandomItemPoint(room)
-		if !ok {
-			t.Errorf("Should be available points to spawn an item")
-		}
-		// Verify point is actually in the room
-		if r, _ := m.GetRoomByPoint(p1); r != room {
-			t.Errorf("Point %v belongs to wrong room", p1)
-		}
+	for i := 0; i < 100; i++ {
+		seed := time.Now().UnixNano()
+		m.SetSeed(seed + int64(i))
 
-		// Take random actor point
-		p2, ok := m.TakeRandomActorPoint(room)
-		if !ok {
-			t.Errorf("Should be available points to spawn an item")
-		}
-		if !m.IsWalkable(p2) {
-			t.Errorf("Random actor point %v should be walkable", p2)
-		}
-	})
+		m.ClearLevel()
+		m.GenerateTopology(3, 3)
+		var room *entity.Room
 
-	t.Run("RemoveItem", func(t *testing.T) {
-		p := room.GetCenter()
-
-		// Setup item
-		m.SetItem(p, 100)
-		if !m.IsItem(p) {
-			t.Errorf("Setup failed: item not set")
+		for i := range m.GetRoomsCount() {
+			r, _ := m.GetRoomByID(i)
+			if len(r.GetEmptyItemPoints()) > 1 {
+				room = r
+				break
+			}
 		}
 
-		// Test Remove
-		if !m.RemoveItem(p) {
-			t.Error("RemoveItem returned false")
-		}
-		if m.IsItem(p) {
-			t.Error("Item should be removed")
-		}
+		t.Run("RandomPoints", func(t *testing.T) {
+			// Take random item point
+			itemOldLen := len(room.GetEmptyItemPoints())
+			actorOldLen := len(room.GetEmptyActorPoints())
 
-		// Verify internal room map updated (item can be placed again)
-		// SetItem returns true only if it can place (logic inside SetItem handles map update)
-		// We verify state by checking ID
-		id, _ := m.GetItemID(p)
-		if id != 0 {
-			t.Errorf("Expected ID 0 after removal, got %d", id)
-		}
+			p1, ok := m.TakeRandomItemPoint(room)
 
-		m.SetItem(p, 100)
-		if !m.IsItem(p) {
-			t.Errorf("Setup failed: item not set")
-		}
-	})
+			if !ok {
+				t.Errorf("Seed: %v\nShould be available points to spawn an item", seed)
+			}
 
-	t.Run("RemoveActor", func(t *testing.T) {
-		p := room.GetCenter()
+			// Verify point is actually in the room
+			if r, _ := m.GetRoomByPoint(p1); r != room {
+				t.Errorf("Seed: %v\nPoint %v belongs to wrong room", seed, p1)
+			}
 
-		// Setup actor
-		m.SetActor(p, 100)
-		if !m.IsActor(p) {
-			t.Errorf("Setup failed: actor not set")
-		}
+			if len(room.GetEmptyItemPoints()) != itemOldLen-1 {
+				t.Errorf("Seed: %v\nNumber of empty item points should have decreased", seed)
+			}
 
-		// Test Remove
-		if !m.RemoveActor(p) {
-			t.Errorf("RemoveActor returned false")
-		}
-		if m.IsActor(p) {
-			t.Error("Actor should be removed")
-		}
+			m.RemoveItem(p1)
 
-		// Verify internal room map updated (actor can be placed again)
-		// SetActor returns true only if it can place (logic inside SetItem handles map update)
-		// We verify state by checking ID
-		id, _ := m.GetActorID(p)
-		if id != 0 {
-			t.Errorf("Expected ID 0 after removal, got %d", id)
-		}
+			// Take random actor point
+			p2, ok := m.TakeRandomActorPoint(room)
 
-		m.SetActor(p, 100)
-		if !m.IsActor(p) {
-			t.Errorf("Setup failed: actor not set")
-		}
-	})
+			if !ok {
+				t.Errorf("Seed: %v\nShould be available points to spawn an item", seed)
+			}
 
-	t.Run("ItemAndActorInSamePoint", func(t *testing.T) {
-		p := room.GetCenter()
+			if !m.IsWalkable(p2) {
+				t.Errorf("Seed: %v\nRandom actor point %v should be walkable", seed, p2)
+			}
 
-		m.SetItem(p, 100)
-		if !m.IsItem(p) {
-			t.Errorf("Setup failed: item not set")
-		}
+			if len(room.GetEmptyActorPoints()) != actorOldLen-1 {
+				t.Errorf("Seed: %v\nNumber of empty actor points should have decreased", seed)
+			}
 
-		m.SetActor(p, 100)
-		if !m.IsActor(p) {
-			t.Errorf("Setup failed: actor not set")
-		}
+			m.RemoveActor(p2)
+		})
 
-		if !m.RemoveActor(p) {
-			t.Errorf("RemoveActor returned false")
-		}
-		if m.IsActor(p) {
-			t.Errorf("Actor should be removed")
-		}
-		if !m.IsItem(p) {
-			t.Errorf("Item should stay after actor removal")
-		}
-	})
+		t.Run("RemoveItem", func(t *testing.T) {
+			p := room.GetEmptyItemPoints()[0]
+			oldLen := len(room.GetEmptyItemPoints())
+
+			// Setup item
+			m.SetItem(p, 100)
+			if !m.IsItem(p) {
+				t.Errorf("Seed: %v\nSetup failed: item not set", seed)
+			}
+			if len(room.GetEmptyItemPoints()) != oldLen-1 {
+				t.Errorf("Seed: %v\nNumber of empty item points should have decreased", seed)
+			}
+
+			// Test Remove
+			if !m.RemoveItem(p) {
+				t.Errorf("Seed: %v\nRemoveItem returned false", seed)
+			}
+			if m.IsItem(p) {
+				t.Errorf("Seed: %v\nItem should be removed", seed)
+			}
+			if len(room.GetEmptyItemPoints()) != oldLen {
+				t.Errorf("Seed: %v\nNumber of empty item points should have increased after removal", seed)
+			}
+
+			// Verify internal room map updated (item can be placed again)
+			// SetItem returns true only if it can place (logic inside SetItem handles map update)
+			// We verify state by checking ID
+			id, _ := m.GetItemID(p)
+			if id != 0 {
+				t.Errorf("Seed: %v\nExpected ID 0 after removal, got %d", seed, id)
+			}
+
+			m.SetItem(p, 100)
+			if !m.IsItem(p) {
+				t.Errorf("Seed: %v\nSetup failed: item not set", seed)
+			}
+			if len(room.GetEmptyItemPoints()) != oldLen-1 {
+				t.Errorf("Seed: %v\nNumber of empty item points should have decreased", seed)
+			}
+			m.RemoveItem(p)
+		})
+
+		t.Run("RemoveActor", func(t *testing.T) {
+			p := room.GetEmptyActorPoints()[0]
+			oldLen := len(room.GetEmptyActorPoints())
+
+			// Setup actor
+			m.SetActor(p, 100)
+			if !m.IsActor(p) {
+				t.Errorf("Seed: %v\nSetup failed: actor not set", seed)
+			}
+			if len(room.GetEmptyActorPoints()) != oldLen-1 {
+				t.Errorf("Seed: %v\nNumber of empty actor points should have decreased", seed)
+			}
+
+			// Test Remove
+			if !m.RemoveActor(p) {
+				t.Errorf("Seed: %v\nRemoveActor returned false", seed)
+			}
+			if m.IsActor(p) {
+				t.Errorf("Seed: %v\nActor should be removed", seed)
+			}
+			if len(room.GetEmptyActorPoints()) != oldLen {
+				t.Errorf("Seed: %v\nNumber of empty actor points should have increased", seed)
+			}
+
+			// Verify internal room map updated (actor can be placed again)
+			// SetActor returns true only if it can place (logic inside SetItem handles map update)
+			// We verify state by checking ID
+			id, _ := m.GetActorID(p)
+			if id != 0 {
+				t.Errorf("Seed: %v\nExpected ID 0 after removal, got %d", seed, id)
+			}
+
+			m.SetActor(p, 100)
+			if !m.IsActor(p) {
+				t.Errorf("Seed: %v\nSetup failed: actor not set", seed)
+			}
+			if len(room.GetEmptyActorPoints()) != oldLen-1 {
+				t.Errorf("Seed: %v\nNumber of empty actor point should have decreased", seed)
+			}
+			m.RemoveActor(p)
+		})
+
+		t.Run("ItemAndActorInSamePoint", func(t *testing.T) {
+			p := room.GetEmptyItemPoints()[0]
+
+			m.SetItem(p, 100)
+			if !m.IsItem(p) {
+				t.Errorf("Seed: %v\nSetup failed: item not set", seed)
+			}
+
+			m.SetActor(p, 100)
+			if !m.IsActor(p) {
+				t.Errorf("Seed: %v\nSetup failed: actor not set", seed)
+			}
+
+			if !m.RemoveActor(p) {
+				t.Errorf("Seed: %v\nRemoveActor returned false", seed)
+			}
+			if m.IsActor(p) {
+				t.Errorf("Seed: %v\nActor should be removed", seed)
+			}
+			if !m.IsItem(p) {
+				t.Errorf("Seed: %v\nItem should stay after actor removal", seed)
+			}
+		})
+	}
+
 }
 
 //
@@ -709,7 +775,7 @@ func TestMutatorsAndRandomPickers(t *testing.T) {
 
 func TestMapDeterminism(t *testing.T) {
 	// Seed must guarantee identical map generation
-	seed := int64(12345)
+	seed := int64(1769754240669420900)
 
 	// Map A
 	mA := entity.NewDefaultMap()
