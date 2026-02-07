@@ -8,13 +8,6 @@ import (
 	"math"
 )
 
-// Graph interface of map for A* algorithm
-// interface on consumer side
-type Graph[T comparable] interface {
-	GetNeighbors(n T) []T
-	CalcHeuristic(n1, n2 T) float64
-}
-
 // reconstructPath builds path from start to end node
 func reconstructPath[T comparable](endpoint *node[T]) []T {
 	path := make([]T, 0)

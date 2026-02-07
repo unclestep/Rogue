@@ -1,6 +1,7 @@
 package entities
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"maps"
@@ -268,6 +269,172 @@ func testGenerateObjects(t *testing.T,
 	}
 }
 
+func TestGenerateKeysAndDoors(t *testing.T) {
+	var seed int64 = time.Now().UnixNano() // TODO: check 1770494653384303100
+	m := entity.NewDefaultMap()
+	m.SetSeed(seed)
+
+	m.GenerateTopology(3, 3)
+
+	t.Run("Default", func(t *testing.T) {
+		for range 100 {
+			genKeys := m.GenerateKeysAndDoors(3, 3)
+
+			if len(genKeys) != 3 {
+				t.Errorf("Seed: %v\nExpected 3 generated keys, got %d", seed, len(genKeys))
+				fmt.Print(m)
+			}
+
+			inventory, visited := bfsForLockedDoors(m, genKeys)
+
+			if len(inventory) != 3 {
+				t.Errorf("Seed: %v\nExpected 3 keys in inventory, got %d", seed, len(inventory))
+				t.Errorf("\nGenerated key positions: %v\n", genKeys)
+				fmt.Print(m)
+			}
+
+			if _, exists := visited[m.GetExitPoint()]; !exists {
+				t.Errorf("Seed : %v\nExit was not reached from the entrance", seed)
+				fmt.Print(m)
+			}
+
+			m.ClearItems()
+		}
+
+	})
+
+	t.Run("MoreDoorsThanKeys", func(t *testing.T) {
+		for range 100 {
+			genKeys := m.GenerateKeysAndDoors(5, 3)
+			fmt.Print(m)
+
+			if len(genKeys) != 3 {
+				t.Errorf("Seed: %v\nExpected 3 generated keys, got %d", seed, len(genKeys))
+			}
+
+			inventory, visited := bfsForLockedDoors(m, genKeys)
+
+			if len(inventory) != 3 {
+				t.Errorf("Seed: %v\nExpected 3 keys in inventory, got %d", seed, len(inventory))
+				fmt.Print(m)
+			}
+
+			if _, exists := visited[m.GetExitPoint()]; !exists {
+				t.Errorf("Seed : %v\nExit was not reached from the entrance", seed)
+				fmt.Print(m)
+			}
+
+			m.ClearItems()
+		}
+	})
+
+	t.Run("MoreKeysThanDoors", func(t *testing.T) {
+		for range 100 {
+			genKeys := m.GenerateKeysAndDoors(3, 5)
+			fmt.Print(m)
+
+			if len(genKeys) != 3 {
+				t.Errorf("Seed: %v\nExpected 3 generated keys, got %d", seed, len(genKeys))
+			}
+
+			inventory, visited := bfsForLockedDoors(m, genKeys)
+
+			if len(inventory) != 3 {
+				t.Errorf("Seed: %v\nExpected 3 keys in inventory, got %d", seed, len(inventory))
+				fmt.Print(m)
+			}
+
+			if _, exists := visited[m.GetExitPoint()]; !exists {
+				t.Errorf("Seed : %v\nExit was not reached from the entrance", seed)
+				fmt.Print(m)
+			}
+
+			m.ClearItems()
+		}
+	})
+
+	t.Run("TooManyDoors", func(t *testing.T) {
+		for range 100 {
+			genKeys := m.GenerateKeysAndDoors(100, 1)
+
+			if len(genKeys) != 1 {
+				t.Errorf("Seed: %v\nExpected 3 generated keys, got %d", seed, len(genKeys))
+			}
+
+			inventory, visited := bfsForLockedDoors(m, genKeys)
+
+			if len(inventory) != 1 {
+				t.Errorf("Seed: %v\nExpected 3 keys in inventory, got %d", seed, len(inventory))
+				fmt.Print(m)
+			}
+
+			if _, exists := visited[m.GetExitPoint()]; !exists {
+				t.Errorf("Seed : %v\nExit was not reached from the entrance", seed)
+				fmt.Print(m)
+			}
+
+			m.ClearItems()
+		}
+	})
+
+	t.Run("OneRoomOnTheMap", func(t *testing.T) {
+		m.ClearTopology()
+		m.GenerateTopology(1, 1)
+		genKeys := m.GenerateKeysAndDoors(3, 3)
+
+		if len(genKeys) != 0 {
+			t.Errorf("Seed: %v\nExpected 0 generated keys, got %d", seed, len(genKeys))
+		}
+
+		m.ClearItems()
+	})
+}
+
+func bfsForLockedDoors(m *entity.Map, genKeys map[int]geometry.Point) (map[entity.DoorColor]struct{}, map[geometry.Point]bool) {
+	inventory := make(map[entity.DoorColor]struct{})
+	visited := make(map[geometry.Point]bool)
+	queue := []geometry.Point{m.GetEntrancePoint()}
+
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+
+		itemID, _ := m.GetItemID(cur)
+		if _, isKey := genKeys[itemID]; isKey {
+			color := entity.DoorColor(itemID)
+			if _, hasKey := inventory[color]; !hasKey {
+				inventory[color] = struct{}{}
+				m.RemoveItem(cur)
+
+				clear(visited)
+				clear(queue)
+
+				queue = append(queue, m.GetEntrancePoint())
+				continue
+			}
+		}
+
+		for _, n := range m.GetNeighbors(cur) {
+			if tileType, _ := m.GetTileType(n); tileType == entity.ClosedDoor {
+				for key := range inventory {
+					m.TryOpenDoor(n, key)
+				}
+			}
+
+			if !m.IsWalkable(n) {
+				continue
+			}
+
+			if _, exists := visited[n]; !exists {
+				queue = append(queue, n)
+				visited[n] = true
+			}
+		}
+	}
+
+	return inventory, visited
+}
+
 func TestGenerateLevel(t *testing.T) {
 	m := entity.NewDefaultMap()
 	targetItems := 5
@@ -277,7 +444,7 @@ func TestGenerateLevel(t *testing.T) {
 		seed := time.Now().UnixNano()
 		m.SetSeed(seed)
 
-		m.GenerateLevel(targetItems, targetActors)
+		m.GenerateCustomLevel(3, 3, 0, 0, targetItems, targetActors)
 
 		//  Verify topology exists
 		if m.GetRoomsCount() == 0 {
@@ -780,13 +947,13 @@ func TestMapDeterminism(t *testing.T) {
 	// Map A
 	mA := entity.NewDefaultMap()
 	mA.SetSeed(seed)
-	mA.GenerateLevel(5, 5)
+	mA.GenerateCustomLevel(5, 5, 0, 0, 0, 0)
 	strA := mA.String() // String representation captures topology
 
 	// Map B
 	mB := entity.NewDefaultMap()
 	mB.SetSeed(seed)
-	mB.GenerateLevel(5, 5)
+	mB.GenerateCustomLevel(5, 5, 0, 0, 0, 0)
 	strB := mB.String()
 
 	if strA != strB {
@@ -803,7 +970,7 @@ func TestMapDeterminism(t *testing.T) {
 	// Map C (different seed)
 	mC := entity.NewDefaultMap()
 	mC.SetSeed(seed + 1)
-	mC.GenerateLevel(5, 5)
+	mC.GenerateCustomLevel(5, 5, 0, 0, 0, 0)
 	if mA.String() == mC.String() {
 		t.Error("Maps with different seeds are identical")
 	}
