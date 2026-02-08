@@ -1002,7 +1002,40 @@ func (m *Map) GenerateKeysAndDoors(doorsCount, keysCount int) map[int]geometry.P
 				continue
 			}
 
-			availableRooms = append(availableRooms, r)
+			isCritical := true
+
+			// If key is last
+			if keysRemaining == 1 {
+				isCritical = false
+			} else {
+				// We are looking at how the spawn will affect subsequent locks
+				usedCells[r]++
+				testTopology := nm.analyzeTopology(m.entranceRoom, usedCells)
+				totalCapacity := testTopology.SubtreeCapacity[m.entranceRoom]
+
+				for bridge := range testTopology.Bridges {
+					var node NavNode
+					if testTopology.EntryTime[bridge.dst] > testTopology.EntryTime[bridge.src] {
+						node = bridge.dst
+					} else {
+						node = bridge.src
+					}
+
+					cutCells := testTopology.SubtreeCapacity[node]
+					availableCells := totalCapacity - cutCells
+
+					// If we have found at least one bridge that can be safely blocked, then the room is safe.
+					if availableCells >= (keysRemaining - 1) {
+						isCritical = false
+						break
+					}
+				}
+				usedCells[r]--
+			}
+
+			if !isCritical {
+				availableRooms = append(availableRooms, r)
+			}
 		}
 
 		// No reason to continue iterating if there is no more available rooms; won't be able to find for other keys too

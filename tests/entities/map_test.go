@@ -280,9 +280,14 @@ func TestGenerateKeysAndDoors(t *testing.T) {
 		for i := range 100 {
 			genKeys := m.GenerateKeysAndDoors(3, 3)
 
+			if len(genKeys) != 3 {
+				t.Errorf("Seed: %v, iter: %v\nExpected 3 generated keys, got %d", seed, i, len(genKeys))
+				fmt.Print(m)
+			}
+
 			inventory, visited := bfsForLockedDoors(m, genKeys)
 
-			if len(inventory) != len(genKeys) {
+			if len(inventory) != 3 {
 				t.Errorf("Seed: %v, iter: %v\nExpected 3 keys in inventory, got %d", seed, i, len(inventory))
 				t.Errorf("\nGenerated key positions: %v\n", genKeys)
 				fmt.Print(m)
@@ -302,9 +307,13 @@ func TestGenerateKeysAndDoors(t *testing.T) {
 		for range 100 {
 			genKeys := m.GenerateKeysAndDoors(5, 3)
 
+			if len(genKeys) != 3 {
+				t.Errorf("Seed: %v\nExpected 3 generated keys, got %d", seed, len(genKeys))
+			}
+
 			inventory, visited := bfsForLockedDoors(m, genKeys)
 
-			if len(inventory) != len(genKeys) {
+			if len(inventory) != 3 {
 				t.Errorf("Seed: %v\nExpected 3 keys in inventory, got %d", seed, len(inventory))
 				fmt.Print(m)
 			}
@@ -322,9 +331,14 @@ func TestGenerateKeysAndDoors(t *testing.T) {
 		for range 100 {
 			genKeys := m.GenerateKeysAndDoors(3, 5)
 
+			if len(genKeys) != 3 {
+				t.Errorf("Seed: %v\nExpected 3 generated keys, got %d", seed, len(genKeys))
+				fmt.Print(m)
+			}
+
 			inventory, visited := bfsForLockedDoors(m, genKeys)
 
-			if len(inventory) != len(genKeys) {
+			if len(inventory) != 3 {
 				t.Errorf("Seed: %v\nExpected 3 keys in inventory, got %d", seed, len(inventory))
 				fmt.Print(m)
 			}
@@ -342,9 +356,13 @@ func TestGenerateKeysAndDoors(t *testing.T) {
 		for range 100 {
 			genKeys := m.GenerateKeysAndDoors(100, 1)
 
+			if len(genKeys) != 1 {
+				t.Errorf("Seed: %v\nExpected 3 generated keys, got %d", seed, len(genKeys))
+			}
+
 			inventory, visited := bfsForLockedDoors(m, genKeys)
 
-			if len(inventory) != len(genKeys) {
+			if len(inventory) != 1 {
 				t.Errorf("Seed: %v\nExpected 3 keys in inventory, got %d", seed, len(inventory))
 				fmt.Print(m)
 			}
