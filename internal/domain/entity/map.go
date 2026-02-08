@@ -812,6 +812,43 @@ func (m *Map) getDiggingCost(p geometry.Point) float64 {
 // NavMap - structure for simplified map representation, where rooms and corridors are nodes, doors are edges
 type NavMap map[NavNode][]*Edge
 
+func (nm NavMap) deleteEdge(edge *Edge) {
+	srcNode := edge.src
+	srcEdges := nm[srcNode]
+	removeInd := -1
+
+	for i, e := range srcEdges {
+		if e == edge {
+			removeInd = i
+			break
+		}
+	}
+
+	if removeInd != -1 {
+		srcEdges[removeInd] = srcEdges[len(srcEdges)-1]
+		srcEdges = srcEdges[:len(srcEdges)-1]
+		nm[srcNode] = srcEdges
+	}
+
+	backEdge := edge.back
+	dstNode := edge.dst
+	dstEdges := nm[dstNode]
+	removeInd = -1
+
+	for i, e := range dstEdges {
+		if e == backEdge {
+			removeInd = i
+			break
+		}
+	}
+
+	if removeInd != -1 {
+		dstEdges[removeInd] = dstEdges[len(dstEdges)-1]
+		dstEdges = dstEdges[:len(dstEdges)-1]
+		nm[dstNode] = dstEdges
+	}
+}
+
 // NavNode - interface for nodes
 type NavNode interface {
 	GetID() int
@@ -841,118 +878,109 @@ func (m *Map) GenerateKeysAndDoors(doorsCount, keysCount int) map[int]geometry.P
 		return nil
 	}
 
+	usedCells := make(map[NavNode]int)
+
 	nm := m.createNavMap()
-	topology := nm.analyzeTopology(m.entranceRoom)
+	topology := nm.analyzeTopology(m.entranceRoom, usedCells)
 
-	totalCapacity := topology.SubtreeCapacity[m.entranceRoom]
-	totalDoors := topology.SubtreeDoors[m.entranceRoom]
+	getAvailableEdges := func(topology *TopologyData) []*Edge {
+		availableEdges := make([]*Edge, 0, len(topology.Bridges))
+		for edge := range topology.Bridges {
+			// Don't block doors in start room
+			if edge.src != m.entranceRoom && edge.dst != m.entranceRoom {
+				availableEdges = append(availableEdges, edge)
+			}
+		}
 
-	type Link struct {
-		A, B *Edge
+		// For determinism of test
+		slices.SortFunc(availableEdges, func(a, b *Edge) int {
+			if a.id < b.id {
+				return 1
+			} else if a.id > b.id {
+				return -1
+			}
+			return 0
+		})
+		// Make the order random using local random generator
+		shuffle(m.rand, availableEdges)
+		return availableEdges
 	}
 
-	usedCells := make(map[*Room]int)
-	spawnedKeys := make(map[int]geometry.Point, doorsCount)
+	validKeysCount := min(doorsCount, keysCount)
+	validDoorsCount := min(validKeysCount, len(m.doors))
+	doorsForKey := m.getDoorsForKey(validDoorsCount, validKeysCount)
 
-	lockedEdges := make(map[Link]bool)
-	lockedNodes := make([]NavNode, 0)
-
-	availableEdges := make([]*Edge, 0, len(topology.Bridges))
-	for edge := range topology.Bridges {
-		// Don't block doors in start room
-		if edge.src != m.entranceRoom && edge.dst != m.entranceRoom {
-			availableEdges = append(availableEdges, edge)
-		}
-	}
-
-	// For determinism of test
-	slices.SortFunc(availableEdges, func(a, b *Edge) int {
-		if a.id < b.id {
-			return -1
-		} else if a.id > b.id {
-			return 1
-		}
-		return 0
-	})
-	// Make the order random using local random generator
-	shuffle(m.rand, availableEdges)
-
-	keysCount = min(doorsCount, keysCount)
-	doorsCount = min(keysCount, len(availableEdges))
-	doorsForKey := m.getDoorsForKey(doorsCount, keysCount)
-
+	spawnedKeys := make(map[int]geometry.Point, validDoorsCount)
 	curKeyID := m.idGen()
 
-	for k := 0; k < keysCount; k++ {
-		numDoors := doorsForKey[k]         // Get number of doors to be blocked by current key
-		keysRemaining := keysCount - 1 - k // Keys left
+	for k := 0; k < validKeysCount; k++ {
+		numDoors := doorsForKey[k]          // Get number of doors to be blocked by current key
+		keysRemaining := validKeysCount - k // Keys left
 
 		curLockedEdges := make([]*Edge, 0) // Slice of locked edges by current key
 
 		// Start blocking the doors
 		for door := 0; door < numDoors; door++ {
+			availableEdges := getAvailableEdges(topology)
+
+			totalCapacity := topology.SubtreeCapacity[m.entranceRoom]
+			totalDoors := topology.SubtreeDoors[m.entranceRoom]
+
 			if len(availableEdges) == 0 {
 				break
 			}
 
 			// Edge that satisfies all conditions
 			var selectedEdge *Edge
-			var selectedIndex = -1
 
 			// Edge that does not satisfy all conditions but looks convenient to be locked
-			var optimalCandidate *Edge
-			var optimalIndex = -1
+			var optimalEdge *Edge
 			var maxOptimalDoors = -1
 
 			// Find convenient room in the path
-			for i, edge := range availableEdges {
-				// Create the link because the graph is indirect
-				link := Link{edge, edge.back}
-				backLink := Link{edge.back, edge}
-				if lockedEdges[link] || lockedEdges[backLink] { // Found already locked edge
-					continue
+			for _, edge := range availableEdges {
+				var node NavNode
+				// It is integral to correct define the node which will be locked
+				// Unavailable node is always the one that's further from the center
+				if topology.EntryTime[edge.dst] > topology.EntryTime[edge.src] {
+					node = edge.dst
+				} else {
+					node = edge.src
 				}
 
-				cutDoors := topology.SubtreeDoors[edge.dst] // Number of doors that we lose after locking this edge
-				availableDoors := totalDoors - cutDoors     // Number of doors that will be still available
+				cutDoors := topology.SubtreeDoors[node] // Number of doors that we lose after locking this edge
+				availableDoors := totalDoors - cutDoors // Number of doors that will be still available
 
-				cutCells := topology.SubtreeCapacity[edge.dst] // Number of free cells (to place the key) we lose after locking this edge
-				availableCells := totalCapacity - cutCells     // Number of cells that will be still available
+				cutCells := topology.SubtreeCapacity[node] // Number of free cells (to place the key) we lose after locking this edge
+				availableCells := totalCapacity - cutCells // Number of cells that will be still available
 
 				// This condition checks if there is enough of remain doors and cells
 				// availableCells convince to cut edges with enough remain cells
-				if availableDoors >= keysRemaining && availableCells >= (keysRemaining+1) {
+				if availableDoors >= (keysRemaining-1) && availableCells >= keysRemaining {
 					selectedEdge = edge
-					selectedIndex = i
 					break
 				}
 
 				// If we can't satisfy some of the conditions (or all of them), take the edge that will be the closest one to satisfy them
-				if availableCells >= (keysRemaining+1) && availableDoors > maxOptimalDoors {
+				if availableCells >= keysRemaining && availableDoors > maxOptimalDoors {
 					maxOptimalDoors = availableDoors
-					optimalCandidate = edge
-					optimalIndex = i
+					optimalEdge = edge
 				}
 			}
 
 			// If we couldn't find the edge that satisfies all the conditions, take the optimal one
 			if selectedEdge == nil {
 				// If optimal edge is not found either, stop the loop
-				if optimalCandidate == nil {
+				if optimalEdge == nil {
 					break
 				}
-				selectedEdge = optimalCandidate
-				selectedIndex = optimalIndex
+				selectedEdge = optimalEdge
 			}
 
-			// Virtually block the selected edge
-			link := Link{selectedEdge, selectedEdge.back}
-			lockedEdges[link] = true
 			curLockedEdges = append(curLockedEdges, selectedEdge)
 
-			// Delete the selected edge from the slice of available edges
-			availableEdges[selectedIndex] = availableEdges[len(availableEdges)-1]
-			availableEdges = availableEdges[:len(availableEdges)-1]
+			nm.deleteEdge(selectedEdge)
+			topology = nm.analyzeTopology(m.entranceRoom, usedCells)
 		}
 
 		// If we couldn't find any edge to lock, stop the locking algorithm:
@@ -961,40 +989,20 @@ func (m *Map) GenerateKeysAndDoors(doorsCount, keysCount int) map[int]geometry.P
 			break
 		}
 
-		// Define the nodes which will be unavailable primarily
-		for _, edge := range curLockedEdges {
-			var lockedNode NavNode
-			// It is integral to correct define the node which will be locked
-			// Unavailable node is always the one that's further from the center
-			if topology.EntryTime[edge.dst] > topology.EntryTime[edge.src] {
-				lockedNode = edge.dst
-			} else {
-				lockedNode = edge.src
-			}
-			lockedNodes = append(lockedNodes, lockedNode)
-		}
-
 		// Define the rooms where we can the spawn the door key
 		availableRooms := make([]*Room, 0, len(m.rooms))
 		for _, r := range m.rooms {
-			// If there is no space or consumed all the available cells
-			if r.GetCapacity() <= 0 || usedCells[r] >= MaxKeysForRoom {
+			// Check if the room is in locked subtree
+			if _, reachable := topology.EntryTime[r]; !reachable {
 				continue
 			}
 
-			// Check if the room is in locked subtree
-			isForbidden := false
-			for _, lockedNode := range lockedNodes {
-				if topology.isInSubtree(lockedNode, r) {
-					isForbidden = true
-					break
-				}
+			// If there is no space or consumed all the available cells
+			if r == m.entranceRoom || usedCells[r] >= MaxKeysForRoom {
+				continue
 			}
 
-			if !isForbidden {
-				availableRooms = append(availableRooms, r)
-			}
-
+			availableRooms = append(availableRooms, r)
 		}
 
 		// No reason to continue iterating if there is no more available rooms; won't be able to find for other keys too
@@ -1008,10 +1016,8 @@ func (m *Map) GenerateKeysAndDoors(doorsCount, keysCount int) map[int]geometry.P
 		m.itemGrid[keyPos.Y][keyPos.X] = curKeyID
 		spawnedKeys[curKeyID] = keyPos
 
-		// Update used cells and graph capacity
 		usedCells[keyRoom]++
-		topology.decreaseCapacity(keyRoom)
-		totalCapacity--
+		topology = nm.analyzeTopology(m.entranceRoom, usedCells)
 
 		// Truly lock all the selected edges
 		for _, doorEdge := range curLockedEdges {
@@ -1022,31 +1028,8 @@ func (m *Map) GenerateKeysAndDoors(doorsCount, keysCount int) map[int]geometry.P
 			door.color = DoorColor(curKeyID)
 			door.keyPos = keyPos // Save the door key position
 			m.tileGrid[door.pos.Y][door.pos.X].Type = ClosedDoor
-
-			// Update graph's number of doors
-			topology.decreaseDoors(m.tileGrid[door.pos.Y][door.pos.X].room)
-			totalDoors--
 		}
 
-		// Remove all the edges that are in the blocked subtrees
-		n := 0
-		for _, edge := range availableEdges {
-			// Delete all accompanying edges in addition to the specifically blocked one
-			shouldRemove := false
-			for _, lockedEdge := range curLockedEdges {
-				if topology.isInSubtree(lockedEdge.dst, edge.dst) {
-					shouldRemove = true
-					break
-				}
-			}
-
-			if !shouldRemove {
-				availableEdges[n] = edge
-				n++
-			}
-		}
-
-		availableEdges = availableEdges[:n]
 		curKeyID = m.idGen()
 	}
 
@@ -1196,7 +1179,7 @@ type TopologyData struct {
 	ExitTime        map[NavNode]int     // Need to check if the node is in any subtree
 }
 
-func (nm NavMap) analyzeTopology(src NavNode) *TopologyData {
+func (nm NavMap) analyzeTopology(src NavNode, usedCells map[NavNode]int) *TopologyData {
 	data := &TopologyData{
 		Bridges:         make(map[*Edge]bool),
 		ParentMap:       make(map[NavNode]NavNode),
@@ -1218,8 +1201,22 @@ func (nm NavMap) analyzeTopology(src NavNode) *TopologyData {
 		data.EntryTime[cur] = timer
 		timer++
 
-		data.SubtreeCapacity[cur] = cur.GetCapacity()    // Returns number of empty cells in the node
-		data.SubtreeDoors[cur] = cur.GetOpenDoorsCount() // Returns number of open doors (consider doors as part of the rooms, so for corridor return value will be 0)
+		curCapacity := cur.GetCapacity()
+		if cur == src {
+			curCapacity = 0
+		} else if used, exists := usedCells[cur]; exists && used > 0 {
+			curCapacity -= used
+			if curCapacity < 0 {
+				curCapacity = 0
+			}
+		}
+		data.SubtreeCapacity[cur] = curCapacity
+
+		if cur != src {
+			data.SubtreeDoors[cur] = cur.GetOpenDoorsCount() // Returns number of open doors (consider doors as part of the rooms, so for corridor return value will be 0)
+		} else {
+			data.SubtreeDoors[cur] = 0
+		}
 
 		if incomingEdge != nil {
 			data.ParentMap[cur] = incomingEdge.src
@@ -1256,31 +1253,6 @@ func (nm NavMap) analyzeTopology(src NavNode) *TopologyData {
 
 	dfs(src, nil)
 	return data
-}
-
-// isInSubtree - checks if the given node is in root's subtree
-func (td *TopologyData) isInSubtree(root, node NavNode) bool {
-	return td.EntryTime[root] <= td.EntryTime[node] && td.ExitTime[node] <= td.ExitTime[root]
-}
-
-// decreaseCapacity - decreases node's capacity
-func (td *TopologyData) decreaseCapacity(node NavNode) {
-	cur := node
-
-	for cur != nil {
-		td.SubtreeCapacity[cur]--
-		cur = td.ParentMap[cur]
-	}
-}
-
-// decreaseDoors - decreases node's number of doors
-func (td *TopologyData) decreaseDoors(node NavNode) {
-	cur := node
-
-	for cur != nil {
-		td.SubtreeDoors[cur]--
-		cur = td.ParentMap[cur]
-	}
 }
 
 // GenerateItems - spawns items in all rooms except the start one.
@@ -1754,7 +1726,7 @@ func (r *Room) GetID() int {
 
 // GetCapacity - returns room's number of empty points for items
 func (r *Room) GetCapacity() int {
-	return min(len(r.emptyItemPoints), MaxKeysForRoom)
+	return MaxKeysForRoom
 }
 
 // GetPos - returns room position (left-upper corner)
