@@ -25,6 +25,7 @@ type Map struct {
 	rooms         []*Room        // Pointers to all level rooms
 	doors         map[geometry.Point]*DoorMetadata
 	corridors     map[geometry.Point]struct{}
+	visibleCells  []geometry.Point
 	entranceRoom  *Room      // Pointer to room with spawn point
 	exitRoom      *Room      // Pointer to room with exit point
 	rand          *rand.Rand // Local random generator (for representative tests)
@@ -190,6 +191,14 @@ func (m *Map) GetSeed() int64 {
 	return m.seed
 }
 
+// GetTileVisibility - returns current tile visibility state: visible, explored but not visible, unexplored
+func (m *Map) GetTileVisibility(p geometry.Point) (VisibilityState, bool) {
+	if !m.InBounds(p) {
+		return Unexplored, false
+	}
+	return m.tileGrid[p.Y][p.X].Visibility, true
+}
+
 //
 //
 // --- PREDICATES ---
@@ -228,6 +237,11 @@ func (m *Map) IsDoor(p geometry.Point) bool {
 // IsOpenDoor - returns true if there is an open door in given position and point is in bounds.
 func (m *Map) IsOpenDoor(p geometry.Point) bool {
 	return m.InBounds(p) && m.tileGrid[p.Y][p.X].Type == OpenDoor
+}
+
+// IsVisible - returns true if the given tile is visible
+func (m *Map) IsVisible(p geometry.Point) bool {
+	return m.InBounds(p) && m.tileGrid[p.Y][p.X].Visibility == Visible
 }
 
 //
@@ -291,6 +305,28 @@ func (m *Map) SetSeed(seed int64) {
 // --- MUTATORS ---
 //
 //
+
+func (m *Map) Move(src, dst geometry.Point) bool {
+	if !m.IsWalkable(src) || !m.IsWalkable(dst) {
+		log.Printf("[ERROR] Can't move actor from %v to %v: tile(s) is(are) not walkable\n", src, dst)
+		return false
+	}
+
+	if m.actorGrid[src.Y][src.X] == 0 {
+		log.Printf("[ERROR] Can't move actor from %v to %v: %v is empty\n", src, dst, src)
+		return false
+	}
+
+	if m.actorGrid[dst.Y][dst.X] != 0 {
+		log.Printf("[ERROR] Can't move actor from %v to %v: destination point %v is not empty\n", src, dst, src)
+		return false
+	}
+
+	m.actorGrid[dst.Y][dst.X] = m.actorGrid[src.Y][src.X]
+	m.actorGrid[src.Y][src.X] = 0
+
+	return true
+}
 
 // GenID - generates unique identifier.
 func (m *Map) GenID() int {
@@ -415,6 +451,67 @@ func (m *Map) TryOpenDoor(p geometry.Point, keyColor DoorColor) bool {
 	}
 
 	return false
+}
+
+// UpdateVisibleArea - makes points near the given center within the given radius visible
+// using Bresenham's algorithm. Previous visible points become explored if they are not visible now.
+// Returns false if the given center is not walkable or the rad < 0.
+func (m *Map) UpdateVisibleArea(center geometry.Point, rad int) bool {
+	if !m.IsWalkable(center) || rad < 0 {
+		return false
+	}
+
+	for _, vc := range m.visibleCells {
+		m.tileGrid[vc.Y][vc.X].Visibility = Explored
+	}
+	m.visibleCells = m.visibleCells[:0]
+
+	xc, yc := center.X, center.Y
+	x, y := 0, rad
+	d := 3 - 2*rad
+
+	m.drawHorizontal(xc-y, xc+y, yc)
+
+	for y >= x {
+		m.drawHorizontal(xc-y, xc+y, yc+x)
+		m.drawHorizontal(xc-y, xc+y, yc-x)
+		m.drawHorizontal(xc-x, xc+x, yc+y)
+		m.drawHorizontal(xc-x, xc+x, yc-y)
+
+		x++
+		if d > 0 {
+			y--
+			d = d + 4*(x-y) + 10
+		} else {
+			d = d + 4*x + 6
+		}
+	}
+
+	return true
+}
+
+// drawHorizontal - draws horizontal line
+func (m *Map) drawHorizontal(x1, x2, y int) {
+	xStart, xEnd := x1, x2
+	if xStart > xEnd {
+		xStart, xEnd = xEnd, xStart
+	}
+
+	for x := xStart; x <= xEnd; x++ {
+		if !m.IsWalkable(geometry.Point{X: x, Y: y}) {
+			continue
+		}
+
+		m.tileGrid[y][x].Visibility = Visible
+		m.visibleCells = append(m.visibleCells, geometry.Point{X: x, Y: y})
+	}
+}
+
+func (m *Map) ClearVisibleArea() {
+	for _, vc := range m.visibleCells {
+		m.tileGrid[vc.Y][vc.X].Visibility = Unexplored
+	}
+	m.visibleCells = m.visibleCells[:0]
 }
 
 //

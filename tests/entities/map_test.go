@@ -434,6 +434,87 @@ func bfsForLockedDoors(m *entity.Map, genKeys map[int]geometry.Point) (map[entit
 	return inventory, visited
 }
 
+func TestUpdateVisibleAreas(t *testing.T) {
+	width, height := 80, 24
+	m := entity.NewCustomMap(width, height)
+
+	m.GenerateTopology(1, 1)
+	room, _ := m.GetRoomByID(0)
+
+	roomHeight, roomWidth := room.GetHW()
+	roomSquare := roomHeight * roomWidth
+
+	tests := []struct {
+		name          string
+		center        geometry.Point
+		radius        int
+		expectResult  bool
+		expectVisible int
+	}{
+		{
+			name:          "Zero Radius (Only Center)",
+			center:        room.GetCenter(),
+			radius:        0,
+			expectResult:  true,
+			expectVisible: 1,
+		},
+		{
+			name:          "Normal Radius 2",
+			center:        room.GetCenter(),
+			radius:        2,
+			expectResult:  true,
+			expectVisible: -1,
+		},
+		{
+			name:          "Whole room",
+			center:        room.GetCenter(),
+			radius:        50,
+			expectResult:  true,
+			expectVisible: roomSquare,
+		},
+		{
+			name:          "Negative Radius",
+			center:        room.GetCenter(),
+			radius:        -1,
+			expectResult:  false,
+			expectVisible: 0,
+		},
+		{
+			name:          "Center Not Walkable (Wall)",
+			center:        geometry.Point{X: room.GetPos().X - 1, Y: room.GetPos().Y - 1},
+			radius:        3,
+			expectResult:  false,
+			expectVisible: 0,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			m.ClearVisibleArea()
+
+			success := m.UpdateVisibleArea(test.center, test.radius)
+			if success != test.expectResult {
+				t.Errorf("Expected %v, got %v", test.expectResult, success)
+			}
+
+			actualVisible := 0
+			for y := 0; y < height; y++ {
+				for x := 0; x < width; x++ {
+					if v, _ := m.GetTileVisibility(geometry.Point{X: x, Y: y}); v == entity.Visible {
+						actualVisible++
+					}
+				}
+			}
+
+			if test.expectVisible != -1 && actualVisible != test.expectVisible {
+				t.Errorf("Expected %v, got %v", test.expectVisible, actualVisible)
+			}
+
+		})
+	}
+
+}
+
 func TestGenerateLevel(t *testing.T) {
 	m := entity.NewDefaultMap()
 	targetItems := 5
