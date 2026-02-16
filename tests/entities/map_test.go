@@ -264,13 +264,12 @@ func testGenerateObjects(t *testing.T,
 
 		if diff := mapDiff(genPointsSet, availablePointsSet); len(diff) > 0 {
 			t.Errorf("Seed %v\nGenerated points are not equal initially available points\nDiff:%v\n", seed, diff)
-
 		}
 	}
 }
 
 func TestGenerateKeysAndDoors(t *testing.T) {
-	var seed int64 = time.Now().UnixNano()
+	seed := time.Now().UnixNano()
 	m := entity.NewDefaultMap()
 	m.SetSeed(seed)
 
@@ -300,7 +299,6 @@ func TestGenerateKeysAndDoors(t *testing.T) {
 
 			m.ClearItems()
 		}
-
 	})
 
 	t.Run("MoreDoorsThanKeys", func(t *testing.T) {
@@ -509,10 +507,8 @@ func TestUpdateVisibleAreas(t *testing.T) {
 			if test.expectVisible != -1 && actualVisible != test.expectVisible {
 				t.Errorf("Expected %v, got %v", test.expectVisible, actualVisible)
 			}
-
 		})
 	}
-
 }
 
 func TestGenerateLevel(t *testing.T) {
@@ -666,7 +662,6 @@ func TestLootSystem(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 //
@@ -1011,7 +1006,6 @@ func TestMutatorsAndRandomPickers(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 //

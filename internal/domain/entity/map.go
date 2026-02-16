@@ -89,6 +89,7 @@ const (
 	MaxKeysForRoom = 1
 )
 
+// DoorMetadata - data of all doors
 type DoorMetadata struct {
 	pos    geometry.Point
 	locked bool
@@ -96,6 +97,7 @@ type DoorMetadata struct {
 	keyPos geometry.Point
 }
 
+// DoorColor - special int type for key colors
 type DoorColor int
 
 //
@@ -118,6 +120,7 @@ func NewCustomMap(width, height int) *Map {
 
 	// Configure generators
 	m.idGen = m.generateID(0)
+	// nolint:gosec
 	m.SetSeed(rand.Int63())
 
 	return m
@@ -297,6 +300,7 @@ func (m *Map) SetActor(p geometry.Point, id int) bool {
 // SetSeed - sets seed and creates new random generator.
 func (m *Map) SetSeed(seed int64) {
 	m.seed = seed
+	// nolint:gosec
 	m.rand = rand.New(rand.NewSource(seed))
 }
 
@@ -306,6 +310,8 @@ func (m *Map) SetSeed(seed int64) {
 //
 //
 
+// Move - moves actor from src to dst point if possible.
+// Returns success or failure of operation.
 func (m *Map) Move(src, dst geometry.Point) bool {
 	if !m.IsWalkable(src) || !m.IsWalkable(dst) {
 		log.Printf("[ERROR] Can't move actor from %v to %v: tile(s) is(are) not walkable\n", src, dst)
@@ -443,7 +449,7 @@ func (m *Map) TryOpenDoor(p geometry.Point, keyColor DoorColor) bool {
 		return true
 	}
 
-	door, _ := m.doors[p]
+	door := m.doors[p]
 	if door.color == keyColor {
 		m.tileGrid[p.Y][p.X].Type = OpenDoor
 		door.locked = false
@@ -507,6 +513,7 @@ func (m *Map) drawHorizontal(x1, x2, y int) {
 	}
 }
 
+// ClearVisibleArea - clears visible area
 func (m *Map) ClearVisibleArea() {
 	for _, vc := range m.visibleCells {
 		m.tileGrid[vc.Y][vc.X].Visibility = Unexplored
@@ -1032,7 +1039,7 @@ func (m *Map) GenerateKeysAndDoors(doorsCount, keysCount int) map[int]geometry.P
 
 			// Edge that does not satisfy all conditions but looks convenient to be locked
 			var optimalEdge *Edge
-			var maxOptimalDoors = -1
+			maxOptimalDoors := -1
 
 			// Find convenient room in the path
 			for _, edge := range availableEdges {
@@ -1740,6 +1747,7 @@ func (m *Map) updateRoomEmptyPoints(room *Room, addPoint func(p geometry.Point),
 // -- DEBUG UTILITIES --
 //
 
+// Constants for coloring the text
 const (
 	ColorReset  = "\033[0m"
 	ColorRed    = "\033[31m"
