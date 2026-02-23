@@ -5,12 +5,16 @@ import (
 	"io"
 	"log"
 	"maps"
+	"math/rand"
 	"testing"
 	"time"
 
-	"github.com/Nikolay-Yakunin/gouge/internal/domain/entity"
-	"github.com/Nikolay-Yakunin/gouge/internal/pkg/geometry"
+	"github.com/unclestep/Rogue/internal/domain/entity"
+	"github.com/unclestep/Rogue/internal/pkg/geometry"
 )
+
+var seed = time.Now().UnixNano() //nolint:gofumpt
+var rng = rand.New(rand.NewSource(seed))
 
 //
 //
@@ -26,7 +30,7 @@ import (
 
 func TestGenerateTopologyNormalGrid(t *testing.T) {
 	m := entity.NewDefaultMap()
-	generated := m.GenerateTopology(3, 3)
+	generated := m.GenerateTopology(3, 3, rng)
 	if !generated {
 		t.Error("Expected true")
 	}
@@ -34,7 +38,7 @@ func TestGenerateTopologyNormalGrid(t *testing.T) {
 
 func TestGenerateTopologyTooSmallGrid(t *testing.T) {
 	m := entity.NewCustomMap(10, 10)
-	generated := m.GenerateTopology(3, 3)
+	generated := m.GenerateTopology(3, 3, rng)
 	if generated {
 		t.Error("Expected false")
 	}
@@ -42,7 +46,7 @@ func TestGenerateTopologyTooSmallGrid(t *testing.T) {
 
 func TestGenerateTopologyZeroGrid(t *testing.T) {
 	m := entity.NewCustomMap(10, 10)
-	generated := m.GenerateTopology(0, 0)
+	generated := m.GenerateTopology(0, 0, rng)
 	if generated {
 		t.Error("Expected false")
 	}
@@ -50,7 +54,7 @@ func TestGenerateTopologyZeroGrid(t *testing.T) {
 
 func TestGenerateTopologyNegativeGrid(t *testing.T) {
 	m := entity.NewCustomMap(10, 10)
-	generated := m.GenerateTopology(-1, -1)
+	generated := m.GenerateTopology(-1, -1, rng)
 	if generated {
 		t.Error("Expected false")
 	}
@@ -61,11 +65,8 @@ func TestGenerateTopologyConnectivity(t *testing.T) {
 	m := entity.NewDefaultMap()
 
 	for range 100 {
-		seed := time.Now().UnixNano()
-		m.SetSeed(seed)
-
 		m.ClearTopology()
-		generated := m.GenerateTopology(3, 3)
+		generated := m.GenerateTopology(3, 3, rng)
 
 		entrance := m.GetEntrancePoint()
 		exit := m.GetExitPoint()
@@ -85,14 +86,13 @@ func TestGenerateTopologyConnectivity(t *testing.T) {
 			break
 		}
 
-		for id := range m.GetRoomsCount() {
-			room, _ := m.GetRoomByID(id)
+		for _, room := range m.Rooms {
 			pos := room.GetPos()
 			x, y := pos.X, pos.Y
 			height, width := room.GetHW()
 
 			if !m.InBounds(pos) || !m.InBounds(geometry.Point{X: x + width - 1, Y: y + height - 1}) {
-				t.Errorf("Seed %v: room #%d is out of bounds", seed, id)
+				t.Errorf("Seed %v: room #%d is out of bounds", seed, room.Id)
 			}
 		}
 
@@ -117,7 +117,8 @@ func TestGenerateItems(t *testing.T) {
 		func(r *entity.Room) []geometry.Point {
 			return r.GetEmptyItemPoints()
 		},
-		m.ClearItems)
+		m.ClearItems,
+		rng)
 }
 
 func TestGenerateActors(t *testing.T) {
@@ -128,7 +129,8 @@ func TestGenerateActors(t *testing.T) {
 		func(r *entity.Room) []geometry.Point {
 			return r.GetEmptyActorPoints()
 		},
-		m.ClearActors)
+		m.ClearActors,
+		rng)
 }
 
 // Default object generation tests
@@ -138,14 +140,12 @@ func TestGenerateActors(t *testing.T) {
 // Clearing tests
 func testGenerateObjects(t *testing.T,
 	m *entity.Map,
-	genObject func(n int) map[int]geometry.Point,
+	genObject func(n int, rng *rand.Rand) map[int]geometry.Point,
 	getEmptyPoints func(r *entity.Room) []geometry.Point,
 	clearObjects func(),
+	rng *rand.Rand,
 ) {
 	for range 100 {
-		seed := time.Now().UnixNano()
-		m.SetSeed(seed)
-
 		m.ClearTopology()
 		clearObjects()
 
@@ -191,11 +191,10 @@ func testGenerateObjects(t *testing.T,
 			}
 		}
 
-		m.GenerateTopology(3, 3)
+		m.GenerateTopology(3, 3, rng)
 
 		availablePoints := make([]geometry.Point, 0, 80*24)
-		for i := 0; i < m.GetRoomsCount(); i++ {
-			room, _ := m.GetRoomByID(i)
+		for _, room := range m.Rooms {
 			if room == m.GetEntranceRoom() {
 				continue
 			}
@@ -207,14 +206,14 @@ func testGenerateObjects(t *testing.T,
 		exit := m.GetExitPoint()
 
 		// First generation (all cells are available to store firstItems)
-		genObjects := genObject(3)
+		genObjects := genObject(3, rng)
 
 		if len(genObjects) != 3 {
 			t.Errorf("Seed: %v\nExpected 3 items, got %d", seed, len(genObjects))
 		}
 
 		// Second generation (previous firstItems should stay, new ones shouldn't intersect old ones)
-		maps.Copy(genObjects, genObject(3))
+		maps.Copy(genObjects, genObject(3, rng))
 		if len(genObjects) != 6 {
 			t.Errorf("Seed: %v\nExpected 6 items after 2nd gen, got %d", seed, len(genObjects))
 		}
@@ -223,13 +222,13 @@ func testGenerateObjects(t *testing.T,
 		original := log.Writer() // Temporarily shutting down the logger
 		log.SetOutput(io.Discard)
 
-		noGen1 := genObject(-1)
+		noGen1 := genObject(-1, rng)
 		if noGen1 != nil {
 			t.Errorf("Seed: %v\nThere should be no items in the third generation", seed)
 		}
 
 		// Fourth generation (check zero n)
-		noGen2 := genObject(0)
+		noGen2 := genObject(0, rng)
 		if noGen2 != nil {
 			t.Errorf("Seed: %v\nThere should be no items in the fourth generation", seed)
 		}
@@ -240,7 +239,7 @@ func testGenerateObjects(t *testing.T,
 		// Generating more items than available cells in the map
 		// Should generate maximum possible number of items
 		// Extras shouldn't appear
-		maps.Copy(genObjects, genObject(80*24))
+		maps.Copy(genObjects, genObject(80*24, rng))
 		if len(genObjects) != len(availablePoints) {
 			t.Errorf("Seed: %v\nExpected %d items after 5th gen, got %d", seed, len(availablePoints), len(genObjects))
 		}
@@ -271,13 +270,12 @@ func testGenerateObjects(t *testing.T,
 func TestGenerateKeysAndDoors(t *testing.T) {
 	seed := time.Now().UnixNano()
 	m := entity.NewDefaultMap()
-	m.SetSeed(seed)
 
-	m.GenerateTopology(3, 3)
+	m.GenerateTopology(3, 3, rng)
 
 	t.Run("Default", func(t *testing.T) {
 		for i := range 100 {
-			genKeys := m.GenerateKeysAndDoors(3, 3)
+			genKeys := m.GenerateKeysAndDoors(3, 3, rng)
 
 			if len(genKeys) != 3 {
 				t.Errorf("Seed: %v, iter: %v\nExpected 3 generated keys, got %d", seed, i, len(genKeys))
@@ -303,7 +301,7 @@ func TestGenerateKeysAndDoors(t *testing.T) {
 
 	t.Run("MoreDoorsThanKeys", func(t *testing.T) {
 		for range 100 {
-			genKeys := m.GenerateKeysAndDoors(5, 3)
+			genKeys := m.GenerateKeysAndDoors(5, 3, rng)
 
 			if len(genKeys) != 3 {
 				t.Errorf("Seed: %v\nExpected 3 generated keys, got %d", seed, len(genKeys))
@@ -327,7 +325,7 @@ func TestGenerateKeysAndDoors(t *testing.T) {
 
 	t.Run("MoreKeysThanDoors", func(t *testing.T) {
 		for range 100 {
-			genKeys := m.GenerateKeysAndDoors(3, 5)
+			genKeys := m.GenerateKeysAndDoors(3, 5, rng)
 
 			if len(genKeys) != 3 {
 				t.Errorf("Seed: %v\nExpected 3 generated keys, got %d", seed, len(genKeys))
@@ -352,7 +350,7 @@ func TestGenerateKeysAndDoors(t *testing.T) {
 
 	t.Run("TooManyDoors", func(t *testing.T) {
 		for range 100 {
-			genKeys := m.GenerateKeysAndDoors(100, 1)
+			genKeys := m.GenerateKeysAndDoors(100, 1, rng)
 
 			if len(genKeys) != 1 {
 				t.Errorf("Seed: %v\nExpected 3 generated keys, got %d", seed, len(genKeys))
@@ -376,8 +374,8 @@ func TestGenerateKeysAndDoors(t *testing.T) {
 
 	t.Run("OneRoomOnTheMap", func(t *testing.T) {
 		m.ClearTopology()
-		m.GenerateTopology(1, 1)
-		genKeys := m.GenerateKeysAndDoors(3, 3)
+		m.GenerateTopology(1, 1, rng)
+		genKeys := m.GenerateKeysAndDoors(3, 3, rng)
 
 		if len(genKeys) != 0 {
 			t.Errorf("Seed: %v\nExpected 0 generated keys, got %d", seed, len(genKeys))
@@ -436,8 +434,8 @@ func TestUpdateVisibleAreas(t *testing.T) {
 	width, height := 80, 24
 	m := entity.NewCustomMap(width, height)
 
-	m.GenerateTopology(1, 1)
-	room, _ := m.GetRoomByID(0)
+	m.GenerateTopology(1, 1, rng)
+	room := m.Rooms[0]
 
 	roomHeight, roomWidth := room.GetHW()
 	roomSquare := roomHeight * roomWidth
@@ -517,13 +515,10 @@ func TestGenerateLevel(t *testing.T) {
 	targetActors := 3
 
 	for range 100 {
-		seed := time.Now().UnixNano()
-		m.SetSeed(seed)
-
-		m.GenerateCustomLevel(3, 3, 0, 0, targetItems, targetActors)
+		m.GenerateCustomLevel(3, 3, 0, 0, targetItems, targetActors, rng)
 
 		//  Verify topology exists
-		if m.GetRoomsCount() == 0 {
+		if len(m.Rooms) == 0 {
 			t.Errorf("Seed %v: no rooms generated", seed)
 		}
 		if m.GetEntranceRoom() == nil || m.GetExitRoom() == nil {
@@ -570,17 +565,15 @@ func TestLootSystem(t *testing.T) {
 	m := entity.NewDefaultMap()
 
 	for i := 0; i < 100; i++ {
-		seed := time.Now().UnixNano()
-		m.SetSeed(seed + int64(i))
-
 		m.ClearLevel()
-		m.GenerateTopology(3, 3)
+		m.GenerateTopology(3, 3, rng)
 
 		// Ensure we have a valid room and point
 		var room *entity.Room
-		for i := 0; i < m.GetRoomsCount(); i++ {
-			if r, _ := m.GetRoomByID(i); len(r.GetEmptyItemPoints()) > 1 && r != m.GetEntranceRoom() {
+		for _, r := range m.Rooms {
+			if len(r.GetEmptyItemPoints()) > 1 && r != m.GetEntranceRoom() {
 				room = r
+				break
 			}
 		}
 
@@ -672,7 +665,7 @@ func TestLootSystem(t *testing.T) {
 
 func TestPathfindingInterface(t *testing.T) {
 	m := entity.NewDefaultMap()
-	m.GenerateTopology(2, 2)
+	m.GenerateTopology(2, 2, rng)
 
 	start := m.GetEntrancePoint()
 	end := m.GetExitPoint()
@@ -754,10 +747,10 @@ func TestMapBounds(t *testing.T) {
 
 func TestRoomGetters(t *testing.T) {
 	m := entity.NewDefaultMap()
-	m.GenerateTopology(2, 2)
+	m.GenerateTopology(2, 2, rng)
 
 	t.Run("GetRoomByPoint", func(t *testing.T) {
-		room, ok := m.GetRoomByID(0)
+		room, ok := m.GetRoomByID(1)
 		if !ok {
 			t.Errorf("Room with ID 0 should exist")
 		}
@@ -784,7 +777,7 @@ func TestRoomGetters(t *testing.T) {
 
 func TestMapEntities(t *testing.T) {
 	m := entity.NewCustomMap(10, 10)
-	m.GenerateTopology(1, 1)
+	m.GenerateTopology(1, 1, rng)
 
 	room := m.GetEntranceRoom()
 	center := room.GetCenter()
@@ -823,35 +816,15 @@ func TestMapEntities(t *testing.T) {
 //
 //
 
-func TestIDGenerationSequence(t *testing.T) {
-	m := entity.NewDefaultMap()
-
-	// Check sequentiality
-	id1 := m.GenID()
-	id2 := m.GenID()
-	id3 := m.GenID()
-
-	if id1 == id2 || id2 == id3 {
-		t.Error("GenID produced duplicate values")
-	}
-	if id2 != id1+1 || id3 != id2+1 {
-		t.Error("GenID is not incremental")
-	}
-}
-
 func TestMutatorsAndRandomPickers(t *testing.T) {
 	m := entity.NewDefaultMap()
 
 	for i := 0; i < 100; i++ {
-		seed := time.Now().UnixNano()
-		m.SetSeed(seed + int64(i))
-
 		m.ClearLevel()
-		m.GenerateTopology(3, 3)
+		m.GenerateTopology(3, 3, rng)
 		var room *entity.Room
 
-		for i := range m.GetRoomsCount() {
-			r, _ := m.GetRoomByID(i)
+		for _, r := range m.Rooms {
 			if len(r.GetEmptyItemPoints()) > 1 {
 				room = r
 				break
@@ -863,7 +836,7 @@ func TestMutatorsAndRandomPickers(t *testing.T) {
 			itemOldLen := len(room.GetEmptyItemPoints())
 			actorOldLen := len(room.GetEmptyActorPoints())
 
-			p1, ok := m.TakeRandomItemPoint(room)
+			p1, ok := m.TakeRandomItemPoint(room, rng)
 
 			if !ok {
 				t.Errorf("Seed: %v\nShould be available points to spawn an item", seed)
@@ -881,7 +854,7 @@ func TestMutatorsAndRandomPickers(t *testing.T) {
 			m.RemoveItem(p1)
 
 			// Take random actor point
-			p2, ok := m.TakeRandomActorPoint(room)
+			p2, ok := m.TakeRandomActorPoint(room, rng)
 
 			if !ok {
 				t.Errorf("Seed: %v\nShould be available points to spawn an item", seed)
@@ -1016,18 +989,19 @@ func TestMutatorsAndRandomPickers(t *testing.T) {
 
 func TestMapDeterminism(t *testing.T) {
 	// Seed must guarantee identical map generation
-	seed := int64(1769754240669420900)
+	var testSeed int64 = 0
+	testRng := rand.New(rand.NewSource(testSeed))
 
 	// Map A
 	mA := entity.NewDefaultMap()
-	mA.SetSeed(seed)
-	mA.GenerateCustomLevel(5, 5, 0, 0, 0, 0)
+	mA.GenerateCustomLevel(5, 5, 0, 0, 0, 0, testRng)
 	strA := mA.String() // String representation captures topology
+
+	testRng = rand.New(rand.NewSource(testSeed))
 
 	// Map B
 	mB := entity.NewDefaultMap()
-	mB.SetSeed(seed)
-	mB.GenerateCustomLevel(5, 5, 0, 0, 0, 0)
+	mB.GenerateCustomLevel(5, 5, 0, 0, 0, 0, testRng)
 	strB := mB.String()
 
 	if strA != strB {
@@ -1043,8 +1017,9 @@ func TestMapDeterminism(t *testing.T) {
 
 	// Map C (different seed)
 	mC := entity.NewDefaultMap()
-	mC.SetSeed(seed + 1)
-	mC.GenerateCustomLevel(5, 5, 0, 0, 0, 0)
+	testSeed += 1
+	testRng = rand.New(rand.NewSource(testSeed))
+	mC.GenerateCustomLevel(5, 5, 0, 0, 0, 0, testRng)
 	if mA.String() == mC.String() {
 		t.Error("Maps with different seeds are identical")
 	}
