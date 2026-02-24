@@ -2,21 +2,25 @@ package entity
 
 import (
 	"github.com/unclestep/Rogue/internal/pkg/geometry"
+	"math/rand"
 )
 
 type Actor struct {
-	Id            int       // Unique identificator of actor
-	Kind          ActorType // Actor type, e.g. Player, Vampire, Zombie
-	AttackPattern AttackPatternType
-	MovePattern   MovePatternType
-	Pos           geometry.Point
-	Vitals        map[VitalType]int           // Non-constant stats, e.g. current hp, stamina
-	BaseAttrs     map[AttrType]int            // Base actor's stats: strength, max health and etc.
-	DerivedAttrs  map[AttrType]int            // Computed actor's stats: base attributes + effects + weapon
-	Statuses      map[StatusType]int          // Computed actor's statuses: statuses are granted by effects
-	Effects       map[EffectType]*Effect      // Actor effects: permanent (reversible via dispelling) or temporary (expiring by turn count or usage limit). Effects of the same type stack by extending the duration; however, they do not increase or decrease the modified stats further
-	Traits        map[TriggerType][]*Reaction // What actor does in different situations
+	Id           ActorId   // Unique identification of actor
+	Kind         ActorType // Actor type, e.g. Player, Vampire, Zombie
+	MovePattern  MovePatternType
+	Pos          geometry.Point
+	Vitals       map[VitalType]int      // Non-constant stats, e.g. current hp, stamina
+	BaseAttrs    map[AttrType]int       // Base actor's stats: strength, max health etc.
+	DerivedAttrs map[AttrType]int       // Computed actor's stats: base attributes + effects + weapon
+	Statuses     map[StatusType]int     // Computed actor's statuses: statuses are granted by effects
+	Effects      map[EffectType]*Effect // Actor effects: permanent (reversible via dispelling) or temporary (expiring by turn count or usage limit). Effects of the same type stack by extending the duration; however, they do not increase or decrease the modified stats further
+	EquippedGear map[ItemType]*Item
+	Backpack     *Backpack
+	Traits       map[TriggerType][]*Reaction // What actor does in different situations
 }
+
+type ActorId int
 
 type ActorType int
 
@@ -138,7 +142,7 @@ const (
 	MediumChance   = 50
 	HighChance     = 75
 	VeryHighChance = 90
-	Guranteed      = 100
+	Guaranteed     = 100
 )
 
 // Attack stamina cost consts
@@ -151,133 +155,138 @@ const (
 	MediumMoveStaminaCost = 100
 )
 
-type StatusType int
-
-const (
-	StatusSleep StatusType = iota
-	StatusFirstHitProtection
-	StatusFatigue
-)
-
-func (a *Actor) CanAttack() bool {
-	return a.Statuses[StatusSleep] == 0 && a.Statuses[StatusFatigue] == 0
-}
-
-func (a *Actor) CanMove() bool {
-	return a.Statuses[StatusSleep] == 0
-}
-
-type EffectType int
-
-const (
-	FatigueEffect EffectType = iota
-	FirstHitProtectionEffect
-	SleepEffect
-	InfallibleEffect
-)
-
 //
 //
-// --- EFFECT ---
+// --- ACTOR IMPACT ---
 //
 //
 
-type Effect struct {
-	Kind         EffectType
-	Duration     int
-	Charges      int
-	AttrChange   map[AttrType]int   // Effects only affect on the computation of derived attributes: they never modify base attributes
-	StatusChange map[StatusType]int // Can inflict status conditions such as Sleep, Stun, etc.
+type ActorImpact struct {
+	Actor               *Actor
+	PosChange           geometry.Point
+	VitalsChange        map[VitalType]int
+	BaseAttrsChange     map[AttrType]int
+	StatusesChange      map[StatusType]int
+	AppliedEffects      map[EffectType]*Effect
+	EffectChargesChange map[*Effect]int
+	EffectsToRemove     map[*Effect]bool
 }
 
-//
-// -- CONSTRUCTORS --
-//
-
-func NewFirstHitProtectionEffect() *Effect {
-	effect := &Effect{
-		Kind:         FirstHitProtectionEffect,
-		Duration:     -1,
-		Charges:      1,
-		StatusChange: make(map[StatusType]int),
-	}
-	effect.StatusChange[StatusFirstHitProtection] = 1
-	return effect
-}
-
-func NewSleepEffect(duration int) *Effect {
-	effect := &Effect{
-		Kind:         SleepEffect,
-		Duration:     duration,
-		StatusChange: make(map[StatusType]int),
-	}
-	effect.StatusChange[StatusSleep] = 1
-	return effect
-}
-
-func NewFatigueEffect(duration int) *Effect {
-	effect := &Effect{
-		Kind:         FatigueEffect,
-		Duration:     duration,
-		StatusChange: make(map[StatusType]int),
-	}
-	effect.StatusChange[StatusFatigue] = 1
-	return effect
-}
-
-func NewInfallibleEffect(duration int) *Effect {
-	effect := &Effect{
-		Kind:       InfallibleEffect,
-		Duration:   duration,
-		AttrChange: make(map[AttrType]int),
-	}
-
-	effect.AttrChange[CounterAttackChance] = Guranteed
-
-	return effect
-}
-
-//
-// -- PREDICATES --
-//
-
-func (e *Effect) IsTemp() bool {
-	return e.Duration != -1
-}
-
-func (e *Effect) IsLimited() bool {
-	return e.Charges != -1
-}
-
-func (e *Effect) IsExpired() bool {
-	return e.Duration == 0
-}
-
-func (e *Effect) IsRunOut() bool {
-	return e.Charges == 0
-}
-
-//
-// -- SETTERS --
-//
-
-func (e *Effect) MakeInfinite() {
-	e.Duration = -1
-}
-
-func (e *Effect) MakeUnlimited() {
-	e.Charges = -1
-}
-
-func (e *Effect) ExtendDuration(d int) {
-	if e.IsTemp() {
-		e.Duration += d
+func NewActorImpact(actor *Actor) *ActorImpact {
+	return &ActorImpact{
+		Actor:               actor,
+		VitalsChange:        make(map[VitalType]int),
+		BaseAttrsChange:     make(map[AttrType]int),
+		StatusesChange:      make(map[StatusType]int),
+		AppliedEffects:      make(map[EffectType]*Effect),
+		EffectChargesChange: make(map[*Effect]int),
+		EffectsToRemove:     make(map[*Effect]bool),
 	}
 }
 
-func (e *Effect) AddCharges(c int) {
-	if e.IsLimited() {
-		e.Charges += c
+// Apply - applies all changes and removes expired, ran out or marked as needed to remove effects.
+func (impact *ActorImpact) Apply() {
+	actor := impact.Actor
+
+	for vital, change := range impact.VitalsChange {
+		actor.Vitals[vital] += change
+	}
+
+	for attr, change := range impact.BaseAttrsChange {
+		actor.BaseAttrs[attr] += change
+	}
+
+	for status, change := range impact.StatusesChange {
+		actor.Statuses[status] += change
+	}
+
+	// Add effects first for cases when effect.Charges became <= 0 but there is same effect in AppliedEffects, so we won't delete and add the same effect
+	for _, effect := range impact.AppliedEffects {
+		actor.AddEffect(effect)
+	}
+
+	for effect, change := range impact.EffectChargesChange {
+		if effect.Charges != -1 {
+			effect.Charges += change
+			if effect.Charges <= 0 {
+				removed := impact.RemoveSpentEffect(effect)
+				if removed {
+					effect = nil
+				}
+			}
+		}
+	}
+}
+
+// RemoveSpentEffect - removes effect which duration equals zero or charges equal zero.
+// Recomputes actor's stats automatically if effect was removed.
+func (impact *ActorImpact) RemoveSpentEffect(effect *Effect) bool {
+	removed := false
+
+	if effect.Duration == 0 || effect.Charges == 0 {
+		effectOrigin := impact.whereEffectFrom(effect)
+		if effectOrigin != nil {
+			removed = impact.removeEffect(effectOrigin, effect)
+		}
+	}
+
+	if removed {
+		impact.Actor.RecomputeStats()
+	}
+
+	return removed
+}
+
+// whereEffectFrom - finds effect's origin.
+// Very likely it is straight from actor's active effects but it also could be from actor's equipped gear.
+func (impact *ActorImpact) whereEffectFrom(effect *Effect) map[EffectType]*Effect {
+	if _, exists := impact.Actor.Effects[effect.Kind]; exists {
+		return impact.Actor.Effects
+	}
+
+	for _, gear := range impact.Actor.EquippedGear {
+		if _, exists := gear.Effects[effect.Kind]; exists {
+			return gear.Effects
+		}
+	}
+
+	return nil
+}
+
+// removeEffect - removes effect from its origin.
+// Need to manually recompute actor's stats after this.
+func (impact *ActorImpact) removeEffect(origin map[EffectType]*Effect, effect *Effect) bool {
+	if origin == nil {
+		return false
+	}
+
+	removed := false
+	if _, exists := origin[effect.Kind]; exists {
+		delete(origin, effect.Kind)
+		delete(impact.EffectsToRemove, effect)
+		removed = true
+	}
+	return removed
+}
+
+// RemoveEffects - removes all effects which were marked as needed to remove.
+// These effects do not necessarily expire or run out.
+// Recomputes actor's stats automatically if it removed any of effects.
+func (impact *ActorImpact) RemoveEffects() {
+	needToRecompute := false
+
+	for effect := range impact.EffectsToRemove {
+		effectOrigin := impact.whereEffectFrom(effect)
+		if effectOrigin != nil {
+			needToRecompute = impact.removeEffect(effectOrigin, effect)
+			if needToRecompute {
+				effect = nil
+			}
+		}
+	}
+
+	if needToRecompute {
+		impact.Actor.RecomputeStats()
 	}
 }
 
@@ -285,31 +294,46 @@ func (e *Effect) AddCharges(c int) {
 // -- ACTOR'S EFFECT RELATED METHODS --
 //
 
-func (a *Actor) TickEffects() {
+// TickEffects - updates duration of all effects related to actor.
+// If effects modify something every turn, it will be applied.
+// Permanent effects stay permanent, unlimited charges are not spending.
+func (a *Actor) TickEffects(rng *rand.Rand) {
 	statsChanged := false
+	impact := NewActorImpact(a)
+	effects := a.CollectActiveEffects()
 
-	for _, effect := range a.Effects {
+	for _, effect := range effects {
+		ResolveReactions(TriggerEffectOnTurn, impact, impact, rng)
 		if effect.IsTemp() {
 			effect.ExtendDuration(-1)
-			if effect.IsExpired() {
-				delete(a.Effects, effect.Kind)
-				statsChanged = true
-			}
+		}
+		if effect.IsExpired() {
+			ResolveReactions(TriggerEffectOnExpire, impact, impact, rng)
+			impact.EffectsToRemove[effect] = true
+			statsChanged = true
 		}
 	}
 
 	if statsChanged {
+		impact.Apply()
 		a.RecomputeStats()
 	}
 }
 
-func (a *Actor) ConsumeEffect(effectKind EffectType) {
-	if effect, exists := a.Effects[effectKind]; exists {
-		effect.Charges--
-		if effect.IsRunOut() {
-			a.RemoveEffect(effectKind)
+// CollectActiveEffects - collects all effects related to actor. It can be its proper effects and effects from its gear.
+func (a *Actor) CollectActiveEffects() []*Effect {
+	effects := make([]*Effect, 0)
+	for _, effect := range a.Effects {
+		effects = append(effects, effect)
+	}
+
+	for _, gear := range a.EquippedGear {
+		for _, effect := range gear.Effects {
+			effects = append(effects, effect)
 		}
 	}
+
+	return effects
 }
 
 func (a *Actor) AddEffect(newEffect *Effect) {
@@ -329,11 +353,6 @@ func (a *Actor) AddEffect(newEffect *Effect) {
 		a.Effects[newEffect.Kind] = newEffect
 	}
 
-	a.RecomputeStats()
-}
-
-func (a *Actor) RemoveEffect(effectKind EffectType) {
-	delete(a.Effects, effectKind)
 	a.RecomputeStats()
 }
 
@@ -357,63 +376,14 @@ func (a *Actor) ResetStatuses() {
 
 func (a *Actor) ComputeStats() {
 	for _, effect := range a.Effects {
-		for mod, val := range effect.AttrChange {
+		for mod, val := range effect.AttrsChange {
 			a.DerivedAttrs[mod] += val
 		}
 
-		for status, val := range effect.StatusChange {
+		for status, val := range effect.StatusesChange {
 			a.Statuses[status] += val
 		}
 	}
-}
-
-//
-//
-// --- TRAITS ---
-//
-//
-
-type TriggerType int
-
-const (
-	ComputeUsingSourceDerivedAttr = -1
-)
-
-const (
-	TriggerOnPreHit TriggerType = iota
-	TriggerOnHit
-	TriggerOnDamage // What actor does when he gets a damage
-	TriggerOnMove
-)
-
-type TargetType int
-
-const (
-	TargetOpponent TargetType = iota
-	TargetSource
-)
-
-type Reaction struct {
-	Kind            TriggerType
-	Target          TargetType
-	VitalsChange    map[VitalType]Change
-	BaseAttrsChange map[AttrType]Change
-	EffectsToApply  []*Effect
-	Chance          int
-}
-
-type Change struct {
-	AttrHolder TargetType
-	Attr       AttrType
-	Scale      float64
-}
-
-func (c *Change) Calc(source, opponent *Actor) int {
-	holder := source
-	if c.AttrHolder == TargetOpponent {
-		holder = opponent
-	}
-	return int(float64(holder.DerivedAttrs[c.Attr]) * c.Scale)
 }
 
 //
@@ -438,19 +408,18 @@ var PlayerDefault = AttrConf{
 	CounterAttackChance: MediumChance,
 }
 
-func NewDefaultPlayer(id int, pos geometry.Point) *Actor {
+func NewDefaultPlayer(id ActorId, pos geometry.Point) *Actor {
 	return &Actor{
-		Id:            id,
-		Kind:          PlayerType,
-		AttackPattern: DefaultAttackPattern,
-		MovePattern:   DefaultMovePattern,
-		Pos:           pos,
-		Vitals:        NewVitals(PlayerDefault.MaxHealth, PlayerDefault.MaxStamina),
-		BaseAttrs:     NewAttrs(&PlayerDefault),
-		DerivedAttrs:  NewAttrs(&PlayerDefault),
-		Statuses:      make(map[StatusType]int),
-		Effects:       make(map[EffectType]*Effect),
-		Traits:        make(map[TriggerType][]*Reaction),
+		Id:           id,
+		Kind:         PlayerType,
+		MovePattern:  DefaultMovePattern,
+		Pos:          pos,
+		Vitals:       NewVitals(PlayerDefault.MaxHealth, PlayerDefault.MaxStamina),
+		BaseAttrs:    NewAttrs(&PlayerDefault),
+		DerivedAttrs: NewAttrs(&PlayerDefault),
+		Statuses:     make(map[StatusType]int),
+		Effects:      make(map[EffectType]*Effect),
+		Traits:       make(map[TriggerType][]*Reaction),
 	}
 }
 
@@ -469,19 +438,18 @@ var ZombieDefault = AttrConf{
 	CounterAttackChance: LowChance,
 }
 
-func NewDefaultZombie(id int, pos geometry.Point) *Actor {
+func NewDefaultZombie(id ActorId, pos geometry.Point) *Actor {
 	return &Actor{
-		Id:            id,
-		Kind:          ZombieType,
-		AttackPattern: DefaultAttackPattern,
-		MovePattern:   DefaultMovePattern,
-		Pos:           pos,
-		Vitals:        NewVitals(ZombieDefault.MaxHealth, ZombieDefault.MaxStamina),
-		BaseAttrs:     NewAttrs(&ZombieDefault),
-		DerivedAttrs:  NewAttrs(&ZombieDefault),
-		Statuses:      make(map[StatusType]int),
-		Effects:       make(map[EffectType]*Effect),
-		Traits:        make(map[TriggerType][]*Reaction),
+		Id:           id,
+		Kind:         ZombieType,
+		MovePattern:  DefaultMovePattern,
+		Pos:          pos,
+		Vitals:       NewVitals(ZombieDefault.MaxHealth, ZombieDefault.MaxStamina),
+		BaseAttrs:    NewAttrs(&ZombieDefault),
+		DerivedAttrs: NewAttrs(&ZombieDefault),
+		Statuses:     make(map[StatusType]int),
+		Effects:      make(map[EffectType]*Effect),
+		Traits:       make(map[TriggerType][]*Reaction),
 	}
 }
 
@@ -500,26 +468,25 @@ var VampireDefault = AttrConf{
 	CounterAttackChance: HighChance,
 }
 
-func NewDefaultVampire(id int, pos geometry.Point) *Actor {
+func NewDefaultVampire(id ActorId, pos geometry.Point) *Actor {
 	a := &Actor{
-		Id:            id,
-		Kind:          VampireType,
-		AttackPattern: DefaultAttackPattern,
-		MovePattern:   DefaultMovePattern,
-		Pos:           pos,
-		Vitals:        NewVitals(VampireDefault.MaxHealth, VampireDefault.MaxStamina),
-		BaseAttrs:     NewAttrs(&VampireDefault),
-		DerivedAttrs:  NewAttrs(&VampireDefault),
-		Statuses:      make(map[StatusType]int),
-		Effects:       make(map[EffectType]*Effect),
-		Traits:        make(map[TriggerType][]*Reaction),
+		Id:           id,
+		Kind:         VampireType,
+		MovePattern:  DefaultMovePattern,
+		Pos:          pos,
+		Vitals:       NewVitals(VampireDefault.MaxHealth, VampireDefault.MaxStamina),
+		BaseAttrs:    NewAttrs(&VampireDefault),
+		DerivedAttrs: NewAttrs(&VampireDefault),
+		Statuses:     make(map[StatusType]int),
+		Effects:      make(map[EffectType]*Effect),
+		Traits:       make(map[TriggerType][]*Reaction),
 	}
 
 	OnHitOpponent := Reaction{
 		Kind:            TriggerOnHit,
 		Target:          TargetOpponent,
 		BaseAttrsChange: make(map[AttrType]Change),
-		Chance:          Guranteed,
+		Chance:          Guaranteed,
 	}
 	OnHitOpponent.BaseAttrsChange[MaxHealth] = Change{AttrHolder: TargetSource, Attr: Strength, Scale: -1.0}
 
@@ -528,7 +495,7 @@ func NewDefaultVampire(id int, pos geometry.Point) *Actor {
 		Target:          TargetSource,
 		VitalsChange:    make(map[VitalType]Change),
 		BaseAttrsChange: make(map[AttrType]Change),
-		Chance:          Guranteed,
+		Chance:          Guaranteed,
 	}
 	OnHitSource.VitalsChange[HP] = Change{AttrHolder: TargetSource, Attr: Strength, Scale: 1.0}
 	OnHitSource.BaseAttrsChange[MaxHealth] = Change{AttrHolder: TargetSource, Attr: Strength, Scale: 1.0}
@@ -555,19 +522,18 @@ var GhostDefault = AttrConf{
 	CounterAttackChance: LowChance,
 }
 
-func NewDefaultGhost(id int, pos geometry.Point) *Actor {
+func NewDefaultGhost(id ActorId, pos geometry.Point) *Actor {
 	a := &Actor{
-		Id:            id,
-		Kind:          GhostType,
-		AttackPattern: DefaultAttackPattern,
-		MovePattern:   TeleportMovePattern,
-		Pos:           pos,
-		Vitals:        NewVitals(GhostDefault.MaxHealth, GhostDefault.MaxStamina),
-		BaseAttrs:     NewAttrs(&GhostDefault),
-		DerivedAttrs:  NewAttrs(&GhostDefault),
-		Statuses:      make(map[StatusType]int),
-		Effects:       make(map[EffectType]*Effect),
-		Traits:        make(map[TriggerType][]*Reaction),
+		Id:           id,
+		Kind:         GhostType,
+		MovePattern:  TeleportMovePattern,
+		Pos:          pos,
+		Vitals:       NewVitals(GhostDefault.MaxHealth, GhostDefault.MaxStamina),
+		BaseAttrs:    NewAttrs(&GhostDefault),
+		DerivedAttrs: NewAttrs(&GhostDefault),
+		Statuses:     make(map[StatusType]int),
+		Effects:      make(map[EffectType]*Effect),
+		Traits:       make(map[TriggerType][]*Reaction),
 	}
 
 	return a
@@ -585,32 +551,62 @@ var OgreDefault = AttrConf{
 	Strength:            VeryHighStrength,
 	Dexterity:           LowChance,
 	Hostility:           MediumHostility,
-	CounterAttackChance: Guranteed,
+	CounterAttackChance: Guaranteed,
 }
 
-func NewDefaultOgre(id int, pos geometry.Point) *Actor {
+var OrgeTraits = map[TriggerType][]*Reaction{
+	TriggerOnHit: []*Reaction{
+		&Reaction{
+			Kind:   TriggerOnHit,
+			Target: TargetSource,
+			Chance: Guaranteed,
+			EffectsToApply: []*Effect{
+				&Effect{
+					Kind:     FatigueEffect,
+					Duration: 2,
+					Charges:  -1,
+					StatusesChange: map[StatusType]int{
+						StatusFatigue: 1,
+					},
+					Procs: map[TriggerType][]*Reaction{
+						TriggerEffectOnExpire: []*Reaction{
+							&Reaction{
+								Kind:   TriggerEffectOnExpire,
+								Target: TargetSource,
+								Chance: Guaranteed,
+								EffectsToApply: []*Effect{
+									&Effect{
+										Kind:     InfallibleEffect,
+										Duration: -1,
+										Charges:  1,
+										StatusesChange: map[StatusType]int{
+											StatusInfallible: 1,
+										},
+										ConsumeOn: TriggerOnPreHit,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	},
+}
+
+func NewDefaultOgre(id ActorId, pos geometry.Point) *Actor {
 	a := &Actor{
-		Id:            id,
-		Kind:          OgreType,
-		AttackPattern: DefaultAttackPattern,
-		MovePattern:   DefaultMovePattern,
-		Pos:           pos,
-		Vitals:        NewVitals(OgreDefault.MaxHealth, OgreDefault.MaxStamina),
-		BaseAttrs:     NewAttrs(&OgreDefault),
-		DerivedAttrs:  NewAttrs(&OgreDefault),
-		Statuses:      make(map[StatusType]int),
-		Effects:       make(map[EffectType]*Effect),
-		Traits:        make(map[TriggerType][]*Reaction),
+		Id:           id,
+		Kind:         OgreType,
+		MovePattern:  DefaultMovePattern,
+		Pos:          pos,
+		Vitals:       NewVitals(OgreDefault.MaxHealth, OgreDefault.MaxStamina),
+		BaseAttrs:    NewAttrs(&OgreDefault),
+		DerivedAttrs: NewAttrs(&OgreDefault),
+		Statuses:     make(map[StatusType]int),
+		Effects:      make(map[EffectType]*Effect),
+		Traits:       OrgeTraits,
 	}
-
-	OnHit := Reaction{
-		Kind:           TriggerOnHit,
-		Target:         TargetSource,
-		EffectsToApply: []*Effect{NewFatigueEffect(2)},
-		Chance:         Guranteed,
-	}
-
-	a.Traits[TriggerOnHit] = append(a.Traits[TriggerOnHit], &OnHit)
 
 	return a
 }
@@ -630,19 +626,18 @@ var SnakeMageDefault = AttrConf{
 	CounterAttackChance: MediumChance,
 }
 
-func NewDefaultSnakeMage(id int, pos geometry.Point) *Actor {
+func NewDefaultSnakeMage(id ActorId, pos geometry.Point) *Actor {
 	a := &Actor{
-		Id:            id,
-		Kind:          SnakeMageType,
-		AttackPattern: DefaultAttackPattern,
-		MovePattern:   DiagonalMovePattern,
-		Pos:           pos,
-		Vitals:        NewVitals(SnakeMageDefault.MaxHealth, SnakeMageDefault.MaxStamina),
-		BaseAttrs:     NewAttrs(&SnakeMageDefault),
-		DerivedAttrs:  NewAttrs(&SnakeMageDefault),
-		Statuses:      make(map[StatusType]int),
-		Effects:       make(map[EffectType]*Effect),
-		Traits:        make(map[TriggerType][]*Reaction),
+		Id:           id,
+		Kind:         SnakeMageType,
+		MovePattern:  DiagonalMovePattern,
+		Pos:          pos,
+		Vitals:       NewVitals(SnakeMageDefault.MaxHealth, SnakeMageDefault.MaxStamina),
+		BaseAttrs:    NewAttrs(&SnakeMageDefault),
+		DerivedAttrs: NewAttrs(&SnakeMageDefault),
+		Statuses:     make(map[StatusType]int),
+		Effects:      make(map[EffectType]*Effect),
+		Traits:       make(map[TriggerType][]*Reaction),
 	}
 
 	OnHit := Reaction{
@@ -672,19 +667,18 @@ var MimicDefault = AttrConf{
 	CounterAttackChance: MediumChance,
 }
 
-func NewDefaultMimic(id int, pos geometry.Point) *Actor {
+func NewDefaultMimic(id ActorId, pos geometry.Point) *Actor {
 	a := &Actor{
-		Id:            id,
-		Kind:          MimicType,
-		AttackPattern: DefaultAttackPattern,
-		MovePattern:   StaticMovePattern,
-		Pos:           pos,
-		Vitals:        NewVitals(MimicDefault.MaxHealth, MimicDefault.MaxStamina),
-		BaseAttrs:     NewAttrs(&MimicDefault),
-		DerivedAttrs:  NewAttrs(&MimicDefault),
-		Statuses:      make(map[StatusType]int),
-		Effects:       make(map[EffectType]*Effect),
-		Traits:        make(map[TriggerType][]*Reaction),
+		Id:           id,
+		Kind:         MimicType,
+		MovePattern:  StaticMovePattern,
+		Pos:          pos,
+		Vitals:       NewVitals(MimicDefault.MaxHealth, MimicDefault.MaxStamina),
+		BaseAttrs:    NewAttrs(&MimicDefault),
+		DerivedAttrs: NewAttrs(&MimicDefault),
+		Statuses:     make(map[StatusType]int),
+		Effects:      make(map[EffectType]*Effect),
+		Traits:       make(map[TriggerType][]*Reaction),
 	}
 
 	return a
