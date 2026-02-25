@@ -175,8 +175,12 @@ func (r *Reaction) Perform(source, target *ActorImpact) {
 
 func ResolveReactions(trigger TriggerType, subj *ActorImpact, obj *ActorImpact, rng *rand.Rand) {
 	subjReactions := subj.CollectActorReactions(trigger)
+	ResolveSpecificReactions(subjReactions, subj, obj, rng)
+	subj.DecrementAllRelatedCharges(trigger)
+}
 
-	for _, reaction := range subjReactions {
+func ResolveSpecificReactions(reactions []*Reaction, subj *ActorImpact, obj *ActorImpact, rng *rand.Rand) {
+	for _, reaction := range reactions {
 		if rng.Intn(Guaranteed) >= reaction.Chance {
 			continue
 		}
@@ -195,8 +199,6 @@ func ResolveReactions(trigger TriggerType, subj *ActorImpact, obj *ActorImpact, 
 
 		reaction.Perform(source, target)
 	}
-
-	subj.DecrementAllRelatedCharges(trigger)
 }
 
 func (impact *ActorImpact) CollectActorReactions(trigger TriggerType) []*Reaction {

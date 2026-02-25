@@ -185,7 +185,7 @@ func NewActorImpact(actor *Actor) *ActorImpact {
 }
 
 // Apply - applies all changes and removes expired, ran out or marked as needed to remove effects.
-func (impact *ActorImpact) Apply() {
+func (impact *ActorImpact) Apply(rng *rand.Rand) {
 	actor := impact.Actor
 
 	for vital, change := range impact.VitalsChange {
@@ -200,26 +200,36 @@ func (impact *ActorImpact) Apply() {
 		actor.Statuses[status] += change
 	}
 
-	// Add effects first for cases when effect.Charges became <= 0 but there is same effect in AppliedEffects, so we won't delete and add the same effect
-	for _, effect := range impact.AppliedEffects {
-		actor.AddEffect(effect)
-	}
-
+	// Remove effects whose charges have run out
 	for effect, change := range impact.EffectChargesChange {
 		if effect.Charges != -1 {
 			effect.Charges += change
 			if effect.Charges <= 0 {
-				removed := impact.RemoveSpentEffect(effect)
-				if removed {
-					effect = nil
-				}
+				impact.EffectsToRemove[effect] = true
 			}
 		}
 	}
+
+	// Remove effects which were marked as needed to remove
+	// Usually due to the elapsed duration, but there may be other reasons
+	for effect := range impact.EffectsToRemove {
+		if expireReactions, exists := effect.Procs[TriggerEffectOnExpire]; exists {
+			ResolveSpecificReactions(expireReactions, impact, impact, rng)
+		}
+
+	}
+
+	impact.RemoveEffects()
+
+	// Add applied effects
+	for _, effect := range impact.AppliedEffects {
+		actor.AddEffect(effect)
+	}
+
 }
 
 // RemoveSpentEffect - removes effect which duration equals zero or charges equal zero.
-// Recomputes actor's stats automatically if effect was removed.
+// NOTE: Need to manually recompute actor's stats after this.
 func (impact *ActorImpact) RemoveSpentEffect(effect *Effect) bool {
 	removed := false
 
@@ -228,10 +238,6 @@ func (impact *ActorImpact) RemoveSpentEffect(effect *Effect) bool {
 		if effectOrigin != nil {
 			removed = impact.removeEffect(effectOrigin, effect)
 		}
-	}
-
-	if removed {
-		impact.Actor.RecomputeStats()
 	}
 
 	return removed
@@ -254,7 +260,7 @@ func (impact *ActorImpact) whereEffectFrom(effect *Effect) map[EffectType]*Effec
 }
 
 // removeEffect - removes effect from its origin.
-// Need to manually recompute actor's stats after this.
+// NOTE: Need to manually recompute actor's stats after this.
 func (impact *ActorImpact) removeEffect(origin map[EffectType]*Effect, effect *Effect) bool {
 	if origin == nil {
 		return false
@@ -271,23 +277,20 @@ func (impact *ActorImpact) removeEffect(origin map[EffectType]*Effect, effect *E
 
 // RemoveEffects - removes all effects which were marked as needed to remove.
 // These effects do not necessarily expire or run out.
-// Recomputes actor's stats automatically if it removed any of effects.
-func (impact *ActorImpact) RemoveEffects() {
+// NOTE: Need to manually recompute actor's stats after this.
+func (impact *ActorImpact) RemoveEffects() bool {
 	needToRecompute := false
 
 	for effect := range impact.EffectsToRemove {
 		effectOrigin := impact.whereEffectFrom(effect)
-		if effectOrigin != nil {
-			needToRecompute = impact.removeEffect(effectOrigin, effect)
-			if needToRecompute {
-				effect = nil
-			}
+		needToRecompute = impact.removeEffect(effectOrigin, effect)
+		if needToRecompute {
+			effect = nil
 		}
 	}
+	clear(impact.EffectsToRemove)
 
-	if needToRecompute {
-		impact.Actor.RecomputeStats()
-	}
+	return needToRecompute
 }
 
 //
@@ -298,26 +301,22 @@ func (impact *ActorImpact) RemoveEffects() {
 // If effects modify something every turn, it will be applied.
 // Permanent effects stay permanent, unlimited charges are not spending.
 func (a *Actor) TickEffects(rng *rand.Rand) {
-	statsChanged := false
 	impact := NewActorImpact(a)
 	effects := a.CollectActiveEffects()
 
+	ResolveReactions(TriggerEffectOnTurn, impact, impact, rng)
+
 	for _, effect := range effects {
-		ResolveReactions(TriggerEffectOnTurn, impact, impact, rng)
 		if effect.IsTemp() {
 			effect.ExtendDuration(-1)
 		}
 		if effect.IsExpired() {
-			ResolveReactions(TriggerEffectOnExpire, impact, impact, rng)
 			impact.EffectsToRemove[effect] = true
-			statsChanged = true
 		}
 	}
 
-	if statsChanged {
-		impact.Apply()
-		a.RecomputeStats()
-	}
+	impact.Apply(rng)
+	a.RecomputeStats()
 }
 
 // CollectActiveEffects - collects all effects related to actor. It can be its proper effects and effects from its gear.
@@ -560,8 +559,8 @@ var OrgeTraits = map[TriggerType][]*Reaction{
 			Kind:   TriggerOnHit,
 			Target: TargetSource,
 			Chance: Guaranteed,
-			EffectsToApply: []*Effect{
-				&Effect{
+			EffectsToApply: map[EffectType]*Effect{
+				FatigueEffect: &Effect{
 					Kind:     FatigueEffect,
 					Duration: 2,
 					Charges:  -1,
@@ -574,8 +573,8 @@ var OrgeTraits = map[TriggerType][]*Reaction{
 								Kind:   TriggerEffectOnExpire,
 								Target: TargetSource,
 								Chance: Guaranteed,
-								EffectsToApply: []*Effect{
-									&Effect{
+								EffectsToApply: map[EffectType]*Effect{
+									InfallibleEffect: &Effect{
 										Kind:     InfallibleEffect,
 										Duration: -1,
 										Charges:  1,
@@ -643,7 +642,7 @@ func NewDefaultSnakeMage(id ActorId, pos geometry.Point) *Actor {
 	OnHit := Reaction{
 		Kind:           TriggerOnHit,
 		Target:         TargetOpponent,
-		EffectsToApply: []*Effect{NewSleepEffect(2)},
+		EffectsToApply: map[EffectType]*Effect{SleepEffect: NewSleepEffect(2)},
 		Chance:         MediumChance,
 	}
 
