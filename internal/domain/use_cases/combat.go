@@ -40,14 +40,11 @@ const (
 	AttackOutcomeParticipantIsAlreadyDead
 )
 
-func (cs *CombatService) ExecuteAttack(attackerId, defenderId entity.ActorId) *AttackEvent {
-	attacker, attackerAlive := cs.session.Actors[attackerId]
-	defender, defenderAlive := cs.session.Actors[defenderId]
-
+func (cs *CombatService) ExecuteAttack(attacker, defender *entity.Actor) *AttackEvent {
 	event := &AttackEvent{}
 
 	// If one of participants is already dead
-	if !attackerAlive || !defenderAlive {
+	if attacker.Vitals[entity.HP] <= 0 || defender.Vitals[entity.HP] <= 0 {
 		event.Outcome = AttackOutcomeParticipantIsAlreadyDead
 		return event
 	}
@@ -106,13 +103,13 @@ func (event *AttackEvent) WasPerformed() bool {
 	return event.Outcome == AttackOutcomeSuccess || event.Outcome == AttackOutcomeMissed
 }
 
-func (event *AttackEvent) Perform(gs *entity.GameSession) {
+func (event *AttackEvent) Perform(gs *entity.GameSession, rng *rand.Rand) {
 	if !event.WasPerformed() {
 		return
 	}
 
-	event.Attacker.Apply()
-	event.Defender.Apply()
+	event.Attacker.Apply(rng)
+	event.Defender.Apply(rng)
 
 	attacker := event.Attacker.Actor
 	defender := event.Defender.Actor
@@ -122,7 +119,7 @@ func (event *AttackEvent) Perform(gs *entity.GameSession) {
 		gs.RemoveActor(attacker.Id)
 		// Check player's health in main loop (not here)
 		if attacker != gs.Player {
-			gs.SpawnTreasures(attacker.Pos, calcTreasuresValue(attacker))
+			gs.SpawnTreasures(attacker.Pos, calcTreasuresValue(attacker, rng))
 
 		}
 	}
@@ -131,17 +128,17 @@ func (event *AttackEvent) Perform(gs *entity.GameSession) {
 		gs.RemoveActor(defender.Id)
 		// Check player's health in main loop (not here)
 		if attacker != gs.Player {
-			gs.SpawnTreasures(defender.Pos, calcTreasuresValue(defender))
+			gs.SpawnTreasures(defender.Pos, calcTreasuresValue(defender, rng))
 		}
 	}
 }
 
-func calcTreasuresValue(actor *entity.Actor) int {
+func calcTreasuresValue(actor *entity.Actor, rng *rand.Rand) int {
 	value := 0
 	value += actor.DerivedAttrs[entity.Strength] * 10
 	value += actor.DerivedAttrs[entity.MaxHealth] * 10
 	value += actor.DerivedAttrs[entity.Dexterity] * 5
 	value += actor.DerivedAttrs[entity.Hostility] * 2
-	// value += cs.rng.Intn(int(float64(value) * 0.2))
+	value += rng.Intn(int(float64(value) * 0.2))
 	return value
 }

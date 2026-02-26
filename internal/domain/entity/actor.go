@@ -46,7 +46,6 @@ const (
 	DefaultMovePattern MovePatternType = iota
 	TeleportMovePattern
 	DiagonalMovePattern
-	StaticMovePattern
 )
 
 type VitalType int
@@ -156,6 +155,18 @@ const (
 )
 
 //
+// -- PREDICATES --
+//
+
+func (a *Actor) HasStaminaForMove() bool {
+	return a.Vitals[Stamina] >= a.DerivedAttrs[MoveStaminaCost]
+}
+
+func (a *Actor) HasStaminaForHit() bool {
+	return a.Vitals[Stamina] >= a.DerivedAttrs[AttackStaminaCost]
+}
+
+//
 //
 // --- ACTOR IMPACT ---
 //
@@ -187,6 +198,8 @@ func NewActorImpact(actor *Actor) *ActorImpact {
 // Apply - applies all changes and removes expired, ran out or marked as needed to remove effects.
 func (impact *ActorImpact) Apply(rng *rand.Rand) {
 	actor := impact.Actor
+
+	actor.Pos = actor.Pos.Add(impact.PosChange)
 
 	for vital, change := range impact.VitalsChange {
 		actor.Vitals[vital] += change
@@ -481,7 +494,7 @@ func NewDefaultVampire(id ActorId, pos geometry.Point) *Actor {
 		Traits:       make(map[TriggerType][]*Reaction),
 	}
 
-	OnHitOpponent := Reaction{
+	OnHitOpponent := &Reaction{
 		Kind:            TriggerOnHit,
 		Target:          TargetOpponent,
 		BaseAttrsChange: make(map[AttrType]Change),
@@ -489,7 +502,7 @@ func NewDefaultVampire(id ActorId, pos geometry.Point) *Actor {
 	}
 	OnHitOpponent.BaseAttrsChange[MaxHealth] = Change{AttrHolder: TargetSource, Attr: Strength, Scale: -1.0}
 
-	OnHitSource := Reaction{
+	OnHitSource := &Reaction{
 		Kind:            TriggerOnHit,
 		Target:          TargetSource,
 		VitalsChange:    make(map[VitalType]Change),
@@ -499,7 +512,7 @@ func NewDefaultVampire(id ActorId, pos geometry.Point) *Actor {
 	OnHitSource.VitalsChange[HP] = Change{AttrHolder: TargetSource, Attr: Strength, Scale: 1.0}
 	OnHitSource.BaseAttrsChange[MaxHealth] = Change{AttrHolder: TargetSource, Attr: Strength, Scale: 1.0}
 
-	a.Traits[TriggerOnHit] = append(a.Traits[TriggerOnHit], &OnHitOpponent, &OnHitSource)
+	a.Traits[TriggerOnHit] = append(a.Traits[TriggerOnHit], OnHitOpponent, OnHitSource)
 	a.Effects[FirstHitProtectionEffect] = NewFirstHitProtectionEffect()
 	a.RecomputeStats()
 
@@ -639,14 +652,14 @@ func NewDefaultSnakeMage(id ActorId, pos geometry.Point) *Actor {
 		Traits:       make(map[TriggerType][]*Reaction),
 	}
 
-	OnHit := Reaction{
+	OnHit := &Reaction{
 		Kind:           TriggerOnHit,
 		Target:         TargetOpponent,
 		EffectsToApply: map[EffectType]*Effect{SleepEffect: NewSleepEffect(2)},
 		Chance:         MediumChance,
 	}
 
-	a.Traits[TriggerOnHit] = append(a.Traits[TriggerOnHit], &OnHit)
+	a.Traits[TriggerOnHit] = append(a.Traits[TriggerOnHit], OnHit)
 
 	return a
 }
@@ -670,7 +683,7 @@ func NewDefaultMimic(id ActorId, pos geometry.Point) *Actor {
 	a := &Actor{
 		Id:           id,
 		Kind:         MimicType,
-		MovePattern:  StaticMovePattern,
+		MovePattern:  DefaultMovePattern,
 		Pos:          pos,
 		Vitals:       NewVitals(MimicDefault.MaxHealth, MimicDefault.MaxStamina),
 		BaseAttrs:    NewAttrs(&MimicDefault),
@@ -678,6 +691,13 @@ func NewDefaultMimic(id ActorId, pos geometry.Point) *Actor {
 		Statuses:     make(map[StatusType]int),
 		Effects:      make(map[EffectType]*Effect),
 		Traits:       make(map[TriggerType][]*Reaction),
+	}
+
+	a.Effects[SleepEffect] = &Effect{
+		Kind:      SleepEffect,
+		Duration:  -1,
+		Charges:   1,
+		ConsumeOn: TriggerOnDamage,
 	}
 
 	return a

@@ -14,6 +14,16 @@ const (
 	MaxBackpackTypeCapacity = 9
 )
 
+func (b *Backpack) CanAddItem(itemType ItemType) bool {
+	items, exists := b.Slots[itemType]
+
+	if !exists || len(items) < MaxBackpackTypeCapacity {
+		return true
+	}
+
+	return false
+}
+
 func (b *Backpack) Add(i *Item) bool {
 	if i.Kind == ItemTypeTreasure {
 		b.TreasuresValue += i.Value
