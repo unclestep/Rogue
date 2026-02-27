@@ -23,7 +23,8 @@ type ItemId int
 type ItemType int
 
 const (
-	ItemTypeTreasure ItemType = iota
+	ItemTypeNotSpecified ItemType = iota
+	ItemTypeTreasure
 	ItemTypeFood
 	ItemTypeElixir
 	ItemTypeScroll

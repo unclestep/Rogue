@@ -67,7 +67,7 @@ func (cs *CombatService) ExecuteAttack(attacker, defender *entity.Actor) *Attack
 	entity.ResolveReactions(entity.TriggerOnPreHit, event.Attacker, event.Defender, cs.rng)
 	entity.ResolveReactions(entity.TriggerOnPreHit, event.Defender, event.Attacker, cs.rng)
 
-	chance := calcHitChance(attacker, defender)
+	chance := event.calcHitChance()
 	if !cs.session.IsLucky(chance, cs.rng) {
 		event.Outcome = AttackOutcomeMissed
 		return event
@@ -84,17 +84,22 @@ func (cs *CombatService) ExecuteAttack(attacker, defender *entity.Actor) *Attack
 	return event
 }
 
-func calcHitChance(attacker, defender *entity.Actor) int {
-	if defender.Statuses[entity.StatusUntouchable] > 0 {
+func (event *AttackEvent) calcHitChance() int {
+	defender := event.Defender
+	attacker := event.Attacker
+
+	if status, effect := defender.GetStatus(entity.StatusUntouchable); status > 0 {
+		defender.ConsumeEffect(effect)
 		return 0
 	}
 
-	if attacker.Statuses[entity.StatusInfallible] > 0 {
+	if status, effect := attacker.GetStatus(entity.StatusInfallible); status > 0 {
+		attacker.ConsumeEffect(effect)
 		return 100
 	}
 
-	attackerChance := attacker.DerivedAttrs[entity.Dexterity]
-	defenderChance := defender.DerivedAttrs[entity.Dexterity]
+	attackerChance := attacker.Actor.DerivedAttrs[entity.Dexterity]
+	defenderChance := defender.Actor.DerivedAttrs[entity.Dexterity]
 
 	return attackerChance / (attackerChance + defenderChance) * 100
 }
@@ -114,7 +119,7 @@ func (event *AttackEvent) Perform(gs *entity.GameSession, rng *rand.Rand) {
 	attacker := event.Attacker.Actor
 	defender := event.Defender.Actor
 
-	// Attacker can be killed by defender in different situations: effects, counter attacks, special gear
+	// Attacker can be killed by defender in different situations: effects, counter-attacks, special gear
 	if attacker.Vitals[entity.HP] <= 0 {
 		gs.RemoveActor(attacker.Id)
 		// Check player's health in main loop (not here)
