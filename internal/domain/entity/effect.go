@@ -21,7 +21,7 @@ type Effect struct {
 	AttrsChange    map[AttrType]int   // Affects on the computation of derived attributes: it never modifies base attributes
 	StatusesChange map[StatusType]int // Can inflict status conditions such as Sleep, Stun, etc.
 
-	// Active bonuses: start some iteresting logic maybe :)
+	// Active bonuses
 
 	Procs     map[TriggerType][]*Reaction // Triggers the special ability logic
 	ConsumeOn TriggerType                 // Situations when we need to decrement the charges
@@ -284,7 +284,6 @@ func (r *Reaction) Perform(source, target *ActorImpact) {
 func ResolveReactions(trigger TriggerType, subj *ActorImpact, obj *ActorImpact, rng *rand.Rand) {
 	subjReactions := subj.CollectActorReactions(trigger)
 	ResolveSpecificReactions(subjReactions, subj, obj, rng)
-	subj.DecrementAllRelatedCharges(trigger)
 }
 
 func ResolveSpecificReactions(reactions []*Reaction, subj *ActorImpact, obj *ActorImpact, rng *rand.Rand) {
@@ -364,46 +363,51 @@ func (impact *ActorImpact) DecrementEffectsCharges(trigger TriggerType, effects 
 // -- CONSTRUCTORS --
 //
 
-func NewUntouchableEffect() *Effect {
+func NewUntouchableEffect(duration, charges int) *Effect {
 	effect := &Effect{
 		Kind:           UntouchableEffect,
-		Duration:       -1,
-		Charges:        1,
+		Duration:       duration,
+		Charges:        charges,
 		StatusesChange: map[StatusType]int{StatusUntouchable: 1},
-		Procs:          make(map[TriggerType][]*Reaction),
+		ConsumeOn:      TriggerOnPreHit,
 	}
-
 	return effect
 }
 
 func NewSleepEffect(duration int) *Effect {
 	effect := &Effect{
-		Kind:           SleepEffect,
-		Duration:       duration,
-		StatusesChange: make(map[StatusType]int),
+		Kind:     SleepEffect,
+		Duration: duration,
+		StatusesChange: map[StatusType]int{
+			StatusSleep: 1,
+		},
 	}
-	effect.StatusesChange[StatusSleep] = 1
 	return effect
 }
 
 func NewFatigueEffect(duration int) *Effect {
 	effect := &Effect{
-		Kind:           FatigueEffect,
-		Duration:       duration,
-		StatusesChange: make(map[StatusType]int),
+		Kind:     FatigueEffect,
+		Duration: duration,
+		StatusesChange: map[StatusType]int{
+			StatusFatigue: 1,
+		},
 	}
-	effect.StatusesChange[StatusFatigue] = 1
 	return effect
 }
 
-func NewInfallibleEffect(duration int) *Effect {
+func NewInfallibleEffect(duration, charges int) *Effect {
 	effect := &Effect{
-		Kind:        InfallibleEffect,
-		Duration:    duration,
-		AttrsChange: make(map[AttrType]int),
+		Kind:     InfallibleEffect,
+		Duration: duration,
+		Charges:  charges,
+		AttrsChange: map[AttrType]int{
+			CounterAttackChance: Guaranteed,
+		},
+		StatusesChange: map[StatusType]int{
+			StatusInfallible: 1,
+		},
+		ConsumeOn: TriggerOnPreHit,
 	}
-
-	effect.AttrsChange[CounterAttackChance] = Guaranteed
-
 	return effect
 }

@@ -1,4 +1,4 @@
-package usecases
+package service
 
 import (
 	"math/rand"
@@ -7,21 +7,21 @@ import (
 	"github.com/unclestep/Rogue/internal/domain/entity"
 )
 
-type CombatService struct {
+type Combat struct {
 	session *entity.GameSession
 	seed    int64
 	rng     *rand.Rand
 }
 
-func NewCombatService(session *entity.GameSession) *CombatService {
-	cs := &CombatService{session: session, seed: time.Now().UnixNano()}
-	cs.rng = rand.New(rand.NewSource(cs.seed))
-	return cs
+func NewCombatService(session *entity.GameSession) *Combat {
+	c := &Combat{session: session, seed: time.Now().UnixNano()}
+	c.rng = rand.New(rand.NewSource(c.seed))
+	return c
 }
 
-func (cs *CombatService) SetSeed(seed int64) {
-	cs.seed = seed
-	cs.rng = rand.New(rand.NewSource(cs.seed))
+func (c *Combat) SetSeed(seed int64) {
+	c.seed = seed
+	c.rng = rand.New(rand.NewSource(c.seed))
 }
 
 type AttackEvent struct {
@@ -30,6 +30,7 @@ type AttackEvent struct {
 	Outcome  AttackOutcome
 }
 
+//go:generate stringer -type=AttackOutcome
 type AttackOutcome int
 
 const (
@@ -40,7 +41,7 @@ const (
 	AttackOutcomeParticipantIsAlreadyDead
 )
 
-func (cs *CombatService) ExecuteAttack(attacker, defender *entity.Actor) *AttackEvent {
+func (c *Combat) ExecuteAttack(attacker, defender *entity.Actor) *AttackEvent {
 	event := &AttackEvent{}
 
 	// If one of participants is already dead
@@ -49,8 +50,8 @@ func (cs *CombatService) ExecuteAttack(attacker, defender *entity.Actor) *Attack
 		return event
 	}
 
-	event.Attacker = &entity.ActorImpact{Actor: attacker}
-	event.Defender = &entity.ActorImpact{Actor: defender}
+	event.Attacker = entity.NewActorImpact(attacker)
+	event.Defender = entity.NewActorImpact(defender)
 
 	if !attacker.CanAttack() {
 		event.Outcome = AttackOutcomeStatusCantAttack
@@ -64,22 +65,28 @@ func (cs *CombatService) ExecuteAttack(attacker, defender *entity.Actor) *Attack
 
 	event.Attacker.VitalsChange[entity.Stamina] -= attacker.DerivedAttrs[entity.AttackStaminaCost]
 
-	entity.ResolveReactions(entity.TriggerOnPreHit, event.Attacker, event.Defender, cs.rng)
-	entity.ResolveReactions(entity.TriggerOnPreHit, event.Defender, event.Attacker, cs.rng)
+	entity.ResolveReactions(entity.TriggerOnPreHit, event.Attacker, event.Defender, c.rng)
+	entity.ResolveReactions(entity.TriggerOnPreHit, event.Defender, event.Attacker, c.rng)
 
 	chance := event.calcHitChance()
-	if !cs.session.IsLucky(chance, cs.rng) {
+	if !c.session.IsLucky(chance, c.rng) {
 		event.Outcome = AttackOutcomeMissed
 		return event
 	}
+
+	event.Attacker.DecrementAllRelatedCharges(entity.TriggerOnPreHit)
+	event.Defender.DecrementAllRelatedCharges(entity.TriggerOnPreHit)
 
 	damage := attacker.DerivedAttrs[entity.Strength]
 	if damage > 0 {
 		event.Defender.VitalsChange[entity.HP] -= damage
 	}
 
-	entity.ResolveReactions(entity.TriggerOnHit, event.Attacker, event.Defender, cs.rng)
-	entity.ResolveReactions(entity.TriggerOnDamage, event.Defender, event.Attacker, cs.rng)
+	entity.ResolveReactions(entity.TriggerOnHit, event.Attacker, event.Defender, c.rng)
+	event.Attacker.DecrementAllRelatedCharges(entity.TriggerOnHit)
+
+	entity.ResolveReactions(entity.TriggerOnDamage, event.Defender, event.Attacker, c.rng)
+	event.Defender.DecrementAllRelatedCharges(entity.TriggerOnDamage)
 
 	return event
 }
@@ -132,7 +139,7 @@ func (event *AttackEvent) Perform(gs *entity.GameSession, rng *rand.Rand) {
 	if defender.Vitals[entity.HP] <= 0 {
 		gs.RemoveActor(defender.Id)
 		// Check player's health in main loop (not here)
-		if attacker != gs.Player {
+		if defender != gs.Player {
 			gs.SpawnTreasures(defender.Pos, calcTreasuresValue(defender, rng))
 		}
 	}

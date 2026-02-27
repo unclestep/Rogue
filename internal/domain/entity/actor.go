@@ -182,6 +182,7 @@ func (a *Actor) TickEffects(rng *rand.Rand) {
 	effects := a.CollectActiveEffects()
 
 	ResolveReactions(TriggerEffectOnTurn, impact, impact, rng)
+	impact.DecrementAllRelatedCharges(TriggerEffectOnTurn)
 
 	for _, effect := range effects {
 		if effect.IsTemp() {
@@ -307,14 +308,18 @@ func (impact *ActorImpact) GetEffect(effectType EffectType) *Effect {
 
 func (impact *ActorImpact) GetStatus(statusType StatusType) (int, *Effect) {
 	for _, effect := range impact.Actor.Effects {
-		if statusChange, toRemove := effect.StatusesChange[statusType], impact.EffectsToRemove[effect]; statusChange > 0 && !toRemove {
+		statusChange := effect.StatusesChange[statusType]
+		toRemove := impact.EffectsToRemove[effect]
+		if statusChange > 0 && !toRemove {
 			return statusChange, effect
 		}
 	}
 
 	for _, effect := range impact.AppliedEffects {
-		if statusChange, toRemove := effect.StatusesChange[statusType], impact.EffectsToRemove[effect]; statusChange > 0 && !toRemove {
-			return effect.StatusesChange[statusType], effect
+		statusChange, statusExists := effect.StatusesChange[statusType]
+		toRemove := impact.EffectsToRemove[effect]
+		if statusExists && statusChange > 0 && !toRemove {
+			return statusChange, effect
 		}
 	}
 
@@ -326,7 +331,7 @@ func (impact *ActorImpact) GetStatus(statusType StatusType) (int, *Effect) {
 //
 
 func (impact *ActorImpact) ConsumeEffect(effect *Effect) {
-	if effect.IsLimited() {
+	if effect.IsLimited() && !impact.EffectsToRemove[effect] {
 		impact.EffectChargesChange[effect] -= 1
 		if effect.Charges+impact.EffectChargesChange[effect] <= 0 {
 			impact.EffectsToRemove[effect] = true
@@ -445,6 +450,7 @@ var PlayerDefault = AttrConf{
 	MaxStamina:          MediumStamina,
 	AttackStaminaCost:   MediumAttackStaminaCost,
 	MoveStaminaCost:     MediumMoveStaminaCost,
+	StaminaRegen:        MediumStamina,
 	Strength:            MediumStrength,
 	Dexterity:           MediumChance,
 	Hostility:           MediumHostility,
@@ -477,6 +483,7 @@ var ZombieDefault = AttrConf{
 	MaxStamina:          MediumStamina,
 	AttackStaminaCost:   MediumAttackStaminaCost,
 	MoveStaminaCost:     MediumMoveStaminaCost,
+	StaminaRegen:        MediumStamina,
 	Strength:            MediumStrength,
 	Dexterity:           LowChance,
 	Hostility:           MediumHostility,
@@ -507,6 +514,7 @@ var VampireDefault = AttrConf{
 	MaxStamina:          MediumStamina,
 	AttackStaminaCost:   MediumAttackStaminaCost,
 	MoveStaminaCost:     MediumMoveStaminaCost,
+	StaminaRegen:        MediumStamina,
 	Strength:            MediumStrength,
 	Dexterity:           HighChance,
 	Hostility:           HighHostility,
@@ -546,7 +554,7 @@ func NewDefaultVampire(id ActorId, pos geometry.Point) *Actor {
 	OnHitSource.BaseAttrsChange[MaxHealth] = Change{Holder: TargetSource, Attr: Strength, Scale: 1.0}
 
 	a.Traits[TriggerOnHit] = append(a.Traits[TriggerOnHit], OnHitOpponent, OnHitSource)
-	a.Effects[UntouchableEffect] = NewUntouchableEffect()
+	a.Effects[UntouchableEffect] = NewUntouchableEffect(-1, 1)
 	a.RecomputeStats()
 
 	return a
@@ -561,6 +569,7 @@ var GhostDefault = AttrConf{
 	MaxStamina:          MediumStamina,
 	AttackStaminaCost:   MediumAttackStaminaCost,
 	MoveStaminaCost:     MediumMoveStaminaCost,
+	StaminaRegen:        MediumStamina,
 	Strength:            LowStrength,
 	Dexterity:           HighChance,
 	Hostility:           LowHostility,
@@ -593,6 +602,7 @@ var OgreDefault = AttrConf{
 	MaxStamina:          HighStamina,
 	AttackStaminaCost:   MediumAttackStaminaCost,
 	MoveStaminaCost:     MediumMoveStaminaCost,
+	StaminaRegen:        HighStamina,
 	Strength:            VeryHighStrength,
 	Dexterity:           LowChance,
 	Hostility:           MediumHostility,
@@ -665,6 +675,7 @@ var SnakeMageDefault = AttrConf{
 	MaxStamina:          MediumStamina,
 	AttackStaminaCost:   MediumAttackStaminaCost,
 	MoveStaminaCost:     MediumMoveStaminaCost,
+	StaminaRegen:        MediumStamina,
 	Strength:            MediumStrength,
 	Dexterity:           VeryHighChance,
 	Hostility:           HighHostility,
@@ -706,6 +717,7 @@ var MimicDefault = AttrConf{
 	MaxStamina:          MediumStamina,
 	AttackStaminaCost:   MediumAttackStaminaCost,
 	MoveStaminaCost:     MediumMoveStaminaCost,
+	StaminaRegen:        MediumStamina,
 	Strength:            LowStrength,
 	Dexterity:           HighChance,
 	Hostility:           VeryLowHostility,

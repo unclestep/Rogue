@@ -1,11 +1,12 @@
-package usecases
+package service
 
 import (
-	"github.com/unclestep/Rogue/internal/domain/entity"
-	"github.com/unclestep/Rogue/internal/pkg/geometry"
 	"log"
 	"math/rand"
 	"time"
+
+	"github.com/unclestep/Rogue/internal/domain/entity"
+	"github.com/unclestep/Rogue/internal/pkg/geometry"
 )
 
 //
@@ -14,7 +15,7 @@ import (
 //
 //
 
-type MovementService struct {
+type Movement struct {
 	session      *entity.GameSession
 	moveRegistry *MoveRegistry
 	seed         int64
@@ -25,26 +26,26 @@ type MovementService struct {
 // -- CONSTRUCTOR --
 //
 
-func NewMoveService(session *entity.GameSession) *MovementService {
-	ms := &MovementService{
+func NewMovement(session *entity.GameSession) *Movement {
+	m := &Movement{
 		session:      session,
 		moveRegistry: NewMoveRegistry(),
 		seed:         time.Now().UnixNano(),
 	}
 
-	ms.rng = rand.New(rand.NewSource(ms.seed))
-	ms.RegisterAll()
+	m.rng = rand.New(rand.NewSource(m.seed))
+	m.RegisterAll()
 
-	return ms
+	return m
 }
 
 //
 // -- SETTERS --
 //
 
-func (ms *MovementService) SetSeed(seed int64) {
-	ms.seed = seed
-	ms.rng = rand.New(rand.NewSource(ms.seed))
+func (m *Movement) SetSeed(seed int64) {
+	m.seed = seed
+	m.rng = rand.New(rand.NewSource(m.seed))
 }
 
 //
@@ -69,10 +70,10 @@ func NewMoveRegistry() *MoveRegistry {
 	}
 }
 
-func (ms *MovementService) RegisterAll() {
-	ms.moveRegistry.movements[entity.DefaultMovePattern] = ms.DefaultMove
-	ms.moveRegistry.movements[entity.TeleportMovePattern] = ms.TeleportMove
-	ms.moveRegistry.movements[entity.DiagonalMovePattern] = ms.DiagonalMove
+func (m *Movement) RegisterAll() {
+	m.moveRegistry.movements[entity.DefaultMovePattern] = m.DefaultMove
+	m.moveRegistry.movements[entity.TeleportMovePattern] = m.TeleportMove
+	m.moveRegistry.movements[entity.DiagonalMovePattern] = m.DiagonalMove
 }
 
 func (mr *MoveRegistry) Register(movement entity.MovePatternType, moveFunc func(*entity.Actor, [][]int, WalkableGrid) geometry.Point) {
@@ -132,7 +133,7 @@ func (event *MoveEvent) Perform(gs *entity.GameSession, rng *rand.Rand) {
 // -- MAIN MOVE FUNCTION --
 //
 
-func (ms *MovementService) ExecuteMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) *MoveEvent {
+func (m *Movement) ExecuteMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) *MoveEvent {
 	event := NewMoveEvent(mover)
 
 	if !mover.CanMove() {
@@ -145,14 +146,15 @@ func (ms *MovementService) ExecuteMove(mover *entity.Actor, scentMap [][]int, gr
 		return event
 	}
 
-	moveFunc := ms.moveRegistry.GetMoveFunc(mover.MovePattern)
+	moveFunc := m.moveRegistry.GetMoveFunc(mover.MovePattern)
 	nextPos := moveFunc(mover, scentMap, grid)
 
 	event.Mover.VitalsChange[entity.Stamina] -= mover.DerivedAttrs[entity.MoveStaminaCost]
 	event.Mover.PosChange = nextPos.Sub(mover.Pos)
 
 	if !event.Mover.PosChange.Equal(geometry.Point{X: 0, Y: 0}) {
-		entity.ResolveReactions(entity.TriggerOnMove, event.Mover, event.Mover, ms.rng)
+		entity.ResolveReactions(entity.TriggerOnMove, event.Mover, event.Mover, m.rng)
+		event.Mover.DecrementAllRelatedCharges(entity.TriggerOnMove)
 	}
 
 	return event
@@ -162,20 +164,20 @@ func (ms *MovementService) ExecuteMove(mover *entity.Actor, scentMap [][]int, gr
 // -- MOVE PATTERNS --
 //
 
-func (ms *MovementService) DefaultMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) geometry.Point {
+func (m *Movement) DefaultMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) geometry.Point {
 	ind := 0
-	availablePoints := ms.FindAllMinCardinals(mover.Pos, 1, scentMap, grid)
+	availablePoints := m.FindAllMinCardinals(mover.Pos, 1, scentMap, grid)
 
 	if len(availablePoints) == 0 {
 		return mover.Pos
 	}
 
-	ind = ms.rng.Intn(len(availablePoints))
+	ind = m.rng.Intn(len(availablePoints))
 
 	return availablePoints[ind]
 }
 
-func (ms *MovementService) FindAllMinCardinals(center geometry.Point, searchLen int, scentMap [][]int, grid WalkableGrid) []geometry.Point {
+func (m *Movement) FindAllMinCardinals(center geometry.Point, searchLen int, scentMap [][]int, grid WalkableGrid) []geometry.Point {
 	mins := make([]geometry.Point, 0)
 	minScent := scentMap[center.Y][center.X]
 
@@ -219,22 +221,22 @@ func (ms *MovementService) FindAllMinCardinals(center geometry.Point, searchLen 
 	return mins
 }
 
-func (ms *MovementService) TeleportMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) geometry.Point {
+func (m *Movement) TeleportMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) geometry.Point {
 	ind := 0
 	rad := mover.DerivedAttrs[entity.Hostility]
-	availablePoints := ms.FindAllMinMoore(mover.Pos, rad, scentMap, grid)
+	availablePoints := m.FindAllMinMoore(mover.Pos, rad, scentMap, grid)
 
 	if len(availablePoints) == 0 {
 		return mover.Pos
 	}
 
-	ind = ms.rng.Intn(len(availablePoints))
+	ind = m.rng.Intn(len(availablePoints))
 
 	return availablePoints[ind]
 
 }
 
-func (ms *MovementService) FindAllMinMoore(center geometry.Point, rad int, scentMap [][]int, grid WalkableGrid) []geometry.Point {
+func (m *Movement) FindAllMinMoore(center geometry.Point, rad int, scentMap [][]int, grid WalkableGrid) []geometry.Point {
 	mins := make([]geometry.Point, 0)
 	minScent := scentMap[center.Y][center.X]
 
@@ -263,20 +265,20 @@ func (ms *MovementService) FindAllMinMoore(center geometry.Point, rad int, scent
 	return mins
 }
 
-func (ms *MovementService) DiagonalMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) geometry.Point {
+func (m *Movement) DiagonalMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) geometry.Point {
 	ind := 0
-	availablePoints := ms.FindAllMinDiagonal(mover.Pos, 1, scentMap, grid)
+	availablePoints := m.FindAllMinDiagonal(mover.Pos, 1, scentMap, grid)
 
 	if len(availablePoints) == 0 {
 		return mover.Pos
 	}
 
-	ind = ms.rng.Intn(len(availablePoints))
+	ind = m.rng.Intn(len(availablePoints))
 
 	return availablePoints[ind]
 }
 
-func (ms *MovementService) FindAllMinDiagonal(center geometry.Point, searchLen int, scentMap [][]int, grid WalkableGrid) []geometry.Point {
+func (m *Movement) FindAllMinDiagonal(center geometry.Point, searchLen int, scentMap [][]int, grid WalkableGrid) []geometry.Point {
 	mins := make([]geometry.Point, 0)
 	minScent := scentMap[center.Y][center.X]
 	i := 0

@@ -1,4 +1,4 @@
-package usecases
+package service
 
 import (
 	"log"
@@ -10,13 +10,13 @@ import (
 
 type ActionResolver struct {
 	session  *entity.GameSession
-	combat   *CombatService
-	movement *MovementService
+	combat   *Combat
+	movement *Movement
 	seed     int64
 	rng      *rand.Rand
 }
 
-func NewActionResolver(session *entity.GameSession, combat *CombatService, movement *MovementService) *ActionResolver {
+func NewActionResolver(session *entity.GameSession, combat *Combat, movement *Movement) *ActionResolver {
 	resolver := &ActionResolver{
 		session:  session,
 		combat:   combat,
