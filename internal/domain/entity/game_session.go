@@ -1,8 +1,9 @@
 package entity
 
 import (
-	"github.com/unclestep/Rogue/internal/pkg/geometry"
 	"math/rand"
+
+	"github.com/unclestep/Rogue/internal/pkg/geometry"
 )
 
 const (
@@ -18,7 +19,9 @@ type GameSession struct {
 
 func NewGameSession() *GameSession {
 	gs := &GameSession{
-		Map: NewDefaultMap(),
+		Map:    NewDefaultMap(),
+		Actors: make(map[ActorId]*Actor),
+		Items:  make(map[ItemId]*Item),
 	}
 	return gs
 }
@@ -41,5 +44,4 @@ func (gs *GameSession) SpawnTreasures(actorPos geometry.Point, treasuresValue in
 		treasures := NewTreasureItem(ItemId(itemId), itemPos, treasuresValue)
 		gs.Items[treasures.Id] = treasures
 	}
-
 }

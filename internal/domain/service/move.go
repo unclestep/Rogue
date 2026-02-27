@@ -15,7 +15,7 @@ import (
 //
 //
 
-type Movement struct {
+type Move struct {
 	session      *entity.GameSession
 	moveRegistry *MoveRegistry
 	seed         int64
@@ -26,8 +26,8 @@ type Movement struct {
 // -- CONSTRUCTOR --
 //
 
-func NewMovement(session *entity.GameSession) *Movement {
-	m := &Movement{
+func NewMove(session *entity.GameSession) *Move {
+	m := &Move{
 		session:      session,
 		moveRegistry: NewMoveRegistry(),
 		seed:         time.Now().UnixNano(),
@@ -43,7 +43,7 @@ func NewMovement(session *entity.GameSession) *Movement {
 // -- SETTERS --
 //
 
-func (m *Movement) SetSeed(seed int64) {
+func (m *Move) SetSeed(seed int64) {
 	m.seed = seed
 	m.rng = rand.New(rand.NewSource(m.seed))
 }
@@ -53,7 +53,7 @@ func (m *Movement) SetSeed(seed int64) {
 //
 
 type WalkableGrid interface {
-	IsWalkable(p geometry.Point) bool
+	CanMoveTo(p geometry.Point) bool
 }
 
 //
@@ -70,7 +70,7 @@ func NewMoveRegistry() *MoveRegistry {
 	}
 }
 
-func (m *Movement) RegisterAll() {
+func (m *Move) RegisterAll() {
 	m.moveRegistry.movements[entity.DefaultMovePattern] = m.DefaultMove
 	m.moveRegistry.movements[entity.TeleportMovePattern] = m.TeleportMove
 	m.moveRegistry.movements[entity.DiagonalMovePattern] = m.DiagonalMove
@@ -133,7 +133,7 @@ func (event *MoveEvent) Perform(gs *entity.GameSession, rng *rand.Rand) {
 // -- MAIN MOVE FUNCTION --
 //
 
-func (m *Movement) ExecuteMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) *MoveEvent {
+func (m *Move) ExecuteMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) *MoveEvent {
 	event := NewMoveEvent(mover)
 
 	if !mover.CanMove() {
@@ -164,7 +164,7 @@ func (m *Movement) ExecuteMove(mover *entity.Actor, scentMap [][]int, grid Walka
 // -- MOVE PATTERNS --
 //
 
-func (m *Movement) DefaultMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) geometry.Point {
+func (m *Move) DefaultMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) geometry.Point {
 	ind := 0
 	availablePoints := m.FindAllMinCardinals(mover.Pos, 1, scentMap, grid)
 
@@ -177,7 +177,7 @@ func (m *Movement) DefaultMove(mover *entity.Actor, scentMap [][]int, grid Walka
 	return availablePoints[ind]
 }
 
-func (m *Movement) FindAllMinCardinals(center geometry.Point, searchLen int, scentMap [][]int, grid WalkableGrid) []geometry.Point {
+func (m *Move) FindAllMinCardinals(center geometry.Point, searchLen int, scentMap [][]int, grid WalkableGrid) []geometry.Point {
 	mins := make([]geometry.Point, 0)
 	minScent := scentMap[center.Y][center.X]
 
@@ -186,11 +186,11 @@ func (m *Movement) FindAllMinCardinals(center geometry.Point, searchLen int, sce
 
 	for y := yMin; y <= yMax; y++ {
 		p := geometry.Point{Y: y, X: center.X}
-		pScent := scentMap[y][center.X]
-
-		if !grid.IsWalkable(p) {
+		if !grid.CanMoveTo(p) {
 			continue
 		}
+
+		pScent := scentMap[y][center.X]
 
 		if minScent > pScent {
 			mins = mins[:0]
@@ -203,11 +203,11 @@ func (m *Movement) FindAllMinCardinals(center geometry.Point, searchLen int, sce
 
 	for x := xMin; x <= xMax; x++ {
 		p := geometry.Point{Y: center.Y, X: x}
-		pScent := scentMap[center.Y][x]
-
-		if !grid.IsWalkable(p) {
+		if !grid.CanMoveTo(p) {
 			continue
 		}
+
+		pScent := scentMap[center.Y][x]
 
 		if minScent > pScent {
 			mins = mins[:0]
@@ -221,7 +221,7 @@ func (m *Movement) FindAllMinCardinals(center geometry.Point, searchLen int, sce
 	return mins
 }
 
-func (m *Movement) TeleportMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) geometry.Point {
+func (m *Move) TeleportMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) geometry.Point {
 	ind := 0
 	rad := mover.DerivedAttrs[entity.Hostility]
 	availablePoints := m.FindAllMinMoore(mover.Pos, rad, scentMap, grid)
@@ -233,10 +233,9 @@ func (m *Movement) TeleportMove(mover *entity.Actor, scentMap [][]int, grid Walk
 	ind = m.rng.Intn(len(availablePoints))
 
 	return availablePoints[ind]
-
 }
 
-func (m *Movement) FindAllMinMoore(center geometry.Point, rad int, scentMap [][]int, grid WalkableGrid) []geometry.Point {
+func (m *Move) FindAllMinMoore(center geometry.Point, rad int, scentMap [][]int, grid WalkableGrid) []geometry.Point {
 	mins := make([]geometry.Point, 0)
 	minScent := scentMap[center.Y][center.X]
 
@@ -246,11 +245,11 @@ func (m *Movement) FindAllMinMoore(center geometry.Point, rad int, scentMap [][]
 	for y := yMin; y <= yMax; y++ {
 		for x := xMin; x <= xMax; x++ {
 			p := geometry.Point{Y: y, X: x}
-			pScent := scentMap[y][x]
-
-			if !grid.IsWalkable(p) {
+			if !grid.CanMoveTo(p) {
 				continue
 			}
+
+			pScent := scentMap[y][x]
 
 			if minScent > pScent {
 				mins = mins[:0]
@@ -265,7 +264,7 @@ func (m *Movement) FindAllMinMoore(center geometry.Point, rad int, scentMap [][]
 	return mins
 }
 
-func (m *Movement) DiagonalMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) geometry.Point {
+func (m *Move) DiagonalMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) geometry.Point {
 	ind := 0
 	availablePoints := m.FindAllMinDiagonal(mover.Pos, 1, scentMap, grid)
 
@@ -278,18 +277,21 @@ func (m *Movement) DiagonalMove(mover *entity.Actor, scentMap [][]int, grid Walk
 	return availablePoints[ind]
 }
 
-func (m *Movement) FindAllMinDiagonal(center geometry.Point, searchLen int, scentMap [][]int, grid WalkableGrid) []geometry.Point {
+func (m *Move) FindAllMinDiagonal(center geometry.Point, searchLen int, scentMap [][]int, grid WalkableGrid) []geometry.Point {
 	mins := make([]geometry.Point, 0)
 	minScent := scentMap[center.Y][center.X]
 	i := 0
 
-	yMin, yMax := max(0, center.Y-searchLen), min(len(scentMap)-1, center.Y+searchLen)
-	xMin, xMax := max(0, center.X-searchLen), min(len(scentMap[0])-1, center.X+searchLen)
+	yMin, yMax := center.Y-searchLen, center.Y+searchLen
+	xMin, xMax := center.X-searchLen, center.X+searchLen
+
+	upperAndBottom := make([]geometry.Point, 0, 2)
 
 	for x := xMin; x <= xMax; x++ {
-		upperAndBottom := make([]geometry.Point, 0, 2)
-		bottom := geometry.Point{Y: yMin + i, X: x}
-		upper := geometry.Point{Y: yMax - i, X: x}
+		upperAndBottom = upperAndBottom[:0]
+
+		upper := geometry.Point{Y: yMin + i, X: x}
+		bottom := geometry.Point{Y: yMax - i, X: x}
 
 		upperAndBottom = append(upperAndBottom, bottom)
 		if upper != bottom {
@@ -297,11 +299,11 @@ func (m *Movement) FindAllMinDiagonal(center geometry.Point, searchLen int, scen
 		}
 
 		for _, p := range upperAndBottom {
-			pScent := scentMap[p.Y][p.X]
-
-			if !grid.IsWalkable(p) {
+			if !grid.CanMoveTo(p) {
 				continue
 			}
+
+			pScent := scentMap[p.Y][p.X]
 
 			if minScent > pScent {
 				mins = mins[:0]

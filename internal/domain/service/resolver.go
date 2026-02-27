@@ -11,12 +11,12 @@ import (
 type ActionResolver struct {
 	session  *entity.GameSession
 	combat   *Combat
-	movement *Movement
+	movement *Move
 	seed     int64
 	rng      *rand.Rand
 }
 
-func NewActionResolver(session *entity.GameSession, combat *Combat, movement *Movement) *ActionResolver {
+func NewActionResolver(session *entity.GameSession, combat *Combat, movement *Move) *ActionResolver {
 	resolver := &ActionResolver{
 		session:  session,
 		combat:   combat,

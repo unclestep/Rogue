@@ -1539,9 +1539,9 @@ func (m *Map) GenerateScentMap(points []geometry.Point) [][]int {
 		queue = queue[1:]
 
 		for _, dir := range geometry.GetAllDirs() {
-			n := geometry.Point{X: cur.X + dir.X, Y: cur.Y + dir.Y}
+			n := cur.Add(dir)
 
-			if m.CanMoveTo(n) && scentMap[n.Y][n.X] == math.MaxInt {
+			if m.IsWalkable(n) && scentMap[n.Y][n.X] == math.MaxInt {
 				scentMap[n.Y][n.X] = scentMap[cur.Y][cur.X] + 1
 				queue = append(queue, n)
 			}
