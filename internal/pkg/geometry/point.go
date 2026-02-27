@@ -15,7 +15,7 @@ type Point struct {
 //
 
 func NewDefaultPoint() Point {
-	return Point{X: -1, Y: -1}
+	return Point{X: 0, Y: 0}
 }
 
 //

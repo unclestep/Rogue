@@ -30,6 +30,11 @@ func (gs *GameSession) IsLucky(chance int, rng *rand.Rand) bool {
 	return rng.Intn(100) < chance
 }
 
+func (gs *GameSession) AddActor(actor *Actor) {
+	gs.Map.SetActor(actor.Pos, int(actor.Id))
+	gs.Actors[actor.Id] = actor
+}
+
 func (gs *GameSession) RemoveActor(id ActorId) {
 	actor, exists := gs.Actors[id]
 	if exists {
