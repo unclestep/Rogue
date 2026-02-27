@@ -10,6 +10,13 @@ type Backpack struct {
 	TreasuresValue int
 }
 
+func NewBackpack() *Backpack {
+	return &Backpack{
+		Slots:          make(map[ItemType][]*Item),
+		TreasuresValue: 0,
+	}
+}
+
 const (
 	MaxBackpackTypeCapacity = 9
 )
@@ -53,7 +60,7 @@ func (b *Backpack) RetrieveById(itemId ItemId) *Item {
 
 func (b *Backpack) RetrieveRecent(itemType ItemType) *Item {
 	items, exists := b.Slots[itemType]
-	if !exists {
+	if !exists || len(items) == 0 {
 		return nil
 	}
 

@@ -84,6 +84,14 @@ func (p Point) Add(add Point) Point {
 	return Point{X: p.X + add.X, Y: p.Y + add.Y}
 }
 
+func (p Point) Sub(sub Point) Point {
+	return Point{X: p.X - sub.X, Y: p.Y - sub.Y}
+}
+
+func (p Point) Equal(other Point) bool {
+	return p.X == other.X && p.Y == other.Y
+}
+
 func (p *Point) String() string {
 	return fmt.Sprintf("(%v, %v)", p.X, p.Y)
 }
