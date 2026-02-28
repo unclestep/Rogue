@@ -10,34 +10,36 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/Nikolay-Yakunin/gouge/internal/pkg/algorithm"
-	"github.com/Nikolay-Yakunin/gouge/internal/pkg/geometry"
+	"github.com/unclestep/Rogue/pkg/algorithm"
+	"github.com/unclestep/Rogue/pkg/geometry"
+	"github.com/unclestep/Rogue/pkg/idgen"
 )
 
 // Map - structure for gameboard
 type Map struct {
-	width, height int            // Cols and rows
-	tileGrid      [][]Cell       // Layer 1: Game landscape
-	itemGrid      [][]int        // Layer 2: Location of items
-	actorGrid     [][]int        // Layer 3: Location of actors
-	entrancePoint geometry.Point // Spawn point
-	exitPoint     geometry.Point // End of level point
-	rooms         []*Room        // Pointers to all level rooms
-	doors         map[geometry.Point]*DoorMetadata
-	corridors     map[geometry.Point]struct{}
-	visibleCells  []geometry.Point
-	entranceRoom  *Room      // Pointer to room with spawn point
-	exitRoom      *Room      // Pointer to room with exit point
-	rand          *rand.Rand // Local random generator (for representative tests)
-	seed          int64      // Seed of local random generator
-	idGen         func() int
+	Cols           int              `json:"cols"`             // Map width
+	Rows           int              `json:"rows"`             // Map height
+	TileGrid       [][]Cell         `json:"tile_grid"`        // Layer 1: Game landscape
+	ItemGrid       [][]int          `json:"item_grid"`        // Layer 2: Location of items
+	ActorGrid      [][]int          `json:"actor_grid"`       // Layer 3: Location of actors
+	Rooms          []*Room          `json:"rooms"`            // Pointers to all level rooms
+	EntranceRoomId RoomId           `json:"entrance_room_id"` // Pointer to room with spawn point
+	ExitRoomId     RoomId           `json:"exit_room_id"`     // Pointer to room with exit point
+	EntrancePoint  geometry.Point   `json:"entrance_point"`   // Spawn point
+	ExitPoint      geometry.Point   `json:"exit_point"`       // End of level point
+	VisibleCells   []geometry.Point `json:"visible_cells"`    // For swift access
+
+	// Following attributes are not serialized to JSON: must be recalculated on load
+
+	doors   map[geometry.Point]*DoorMetadata // For swift access
+	roomMap map[RoomId]*Room                 // For swift access
 }
 
 // Cell - structure for cell entity
 type Cell struct {
-	Type       TileType
-	Visibility VisibilityState
-	room       *Room
+	Type       TileType        `json:"type"`
+	Visibility VisibilityState `json:"visibility"`
+	RoomId     RoomId          `json:"room_id"`
 }
 
 // TileType - enumeration of cell tile types
@@ -72,29 +74,41 @@ const (
 
 // Room - structure for room entity
 type Room struct {
-	id                    int
-	pos                   geometry.Point // Left-upper corner
-	width, height         int
-	center                geometry.Point
-	doors                 []*DoorMetadata
-	emptyItemPoints       []geometry.Point
-	emptyItemPointsIndex  map[geometry.Point]int
-	emptyActorPoints      []geometry.Point
-	emptyActorPointsIndex map[geometry.Point]int
+	Id               RoomId           `json:"id"`
+	Pos              geometry.Point   `json:"pos"`                // Left-upper walkable corner
+	Cols             int              `json:"cols"`               // Room width
+	Rows             int              `json:"rows"`               // Room height
+	Center           geometry.Point   `json:"center"`             // Room center
+	Doors            []*DoorMetadata  `json:"doors"`              // Info about all doors in the room
+	EmptyItemPoints  []geometry.Point `json:"empty_item_points"`  // Cached empty points for items. Must be synchronized with the map's itemGrid
+	EmptyActorPoints []geometry.Point `json:"empty_actor_points"` // Cached empty points for actors. Must be synchronized with the map's actorGrid
+
+	// Following attributes are not serialized to JSON: must be recalculated on load
+
+	emptyItemPointsIndex  map[geometry.Point]int // For swift access
+	emptyActorPointsIndex map[geometry.Point]int // For swift access
 }
+
+// RoomId - room identification type
+type RoomId int
 
 // Room constants
 const (
+	InvalidRoomId  = 0
 	MinRoomSize    = 3 // Wall + Floor + Wall
 	MaxKeysForRoom = 1
 )
 
+func NewInvalidPoint() geometry.Point {
+	return geometry.Point{X: -1, Y: -1}
+}
+
 // DoorMetadata - data of all doors
 type DoorMetadata struct {
-	pos    geometry.Point
-	locked bool
-	color  DoorColor
-	keyPos geometry.Point
+	Pos    geometry.Point `json:"pos"`     // Door position
+	Locked bool           `json:"locked"`  // Lock state
+	Color  DoorColor      `json:"color"`   // Key color which opens this door
+	KeyPos geometry.Point `json:"key_pos"` // Position of key which opens this door
 }
 
 // DoorColor - special int type for key colors
@@ -109,19 +123,14 @@ type DoorColor int
 // NewCustomMap - map constructor.
 func NewCustomMap(width, height int) *Map {
 	m := &Map{
-		width:         width,
-		height:        height,
-		tileGrid:      createMatrix[Cell](height, width),
-		actorGrid:     createMatrix[int](height, width),
-		itemGrid:      createMatrix[int](height, width),
-		entrancePoint: geometry.Point{X: -1, Y: -1},
-		exitPoint:     geometry.Point{X: -1, Y: -1},
+		Cols:          width,
+		Rows:          height,
+		TileGrid:      createMatrix[Cell](height, width),
+		ActorGrid:     createMatrix[int](height, width),
+		ItemGrid:      createMatrix[int](height, width),
+		EntrancePoint: NewInvalidPoint(),
+		ExitPoint:     NewInvalidPoint(),
 	}
-
-	// Configure generators
-	m.idGen = m.generateID(0)
-	// nolint:gosec
-	m.SetSeed(rand.Int63())
 
 	return m
 }
@@ -139,22 +148,22 @@ func NewDefaultMap() *Map {
 
 // GetEntrancePoint - returns entrance point.
 func (m *Map) GetEntrancePoint() geometry.Point {
-	return m.entrancePoint
+	return m.EntrancePoint
 }
 
 // GetExitPoint - returns exit point.
 func (m *Map) GetExitPoint() geometry.Point {
-	return m.exitPoint
+	return m.ExitPoint
 }
 
 // GetEntranceRoom - returns entrance room pointer.
 func (m *Map) GetEntranceRoom() *Room {
-	return m.entranceRoom
+	return m.roomMap[m.EntranceRoomId]
 }
 
 // GetExitRoom - returns exit room pointer.
 func (m *Map) GetExitRoom() *Room {
-	return m.exitRoom
+	return m.roomMap[m.ExitRoomId]
 }
 
 // GetTileType - returns topologic type of cell.
@@ -165,7 +174,7 @@ func (m *Map) GetTileType(p geometry.Point) (TileType, bool) {
 		return Empty, false
 	}
 
-	t := m.tileGrid[p.Y][p.X].Type
+	t := m.TileGrid[p.Y][p.X].Type
 	return t, true
 }
 
@@ -175,7 +184,7 @@ func (m *Map) GetItemID(p geometry.Point) (int, bool) {
 		return 0, false
 	}
 
-	id := m.itemGrid[p.Y][p.X]
+	id := m.ItemGrid[p.Y][p.X]
 	return id, true
 }
 
@@ -185,13 +194,8 @@ func (m *Map) GetActorID(p geometry.Point) (int, bool) {
 		return 0, false
 	}
 
-	id := m.actorGrid[p.Y][p.X]
+	id := m.ActorGrid[p.Y][p.X]
 	return id, true
-}
-
-// GetSeed - returns current map seed.
-func (m *Map) GetSeed() int64 {
-	return m.seed
 }
 
 // GetTileVisibility - returns current tile visibility state: visible, explored but not visible, unexplored
@@ -199,7 +203,7 @@ func (m *Map) GetTileVisibility(p geometry.Point) (VisibilityState, bool) {
 	if !m.InBounds(p) {
 		return Unexplored, false
 	}
-	return m.tileGrid[p.Y][p.X].Visibility, true
+	return m.TileGrid[p.Y][p.X].Visibility, true
 }
 
 //
@@ -210,7 +214,7 @@ func (m *Map) GetTileVisibility(p geometry.Point) (VisibilityState, bool) {
 
 // InBounds - return true if point in map boundaries.
 func (m *Map) InBounds(p geometry.Point) bool {
-	return p.X >= 0 && p.X < m.width && p.Y >= 0 && p.Y < m.height
+	return p.X >= 0 && p.X < m.Cols && p.Y >= 0 && p.Y < m.Rows
 }
 
 // IsWalkable - returns true if tile at given position is walkable.
@@ -218,33 +222,38 @@ func (m *Map) IsWalkable(p geometry.Point) bool {
 	if !m.InBounds(p) {
 		return false
 	}
-	t := m.tileGrid[p.Y][p.X].Type
+	t := m.TileGrid[p.Y][p.X].Type
 	return t != Empty && t != Wall && t != ClosedDoor
+}
+
+// CanMoveTo - returns true if given p is walkable and free of actors
+func (m *Map) CanMoveTo(p geometry.Point) bool {
+	return m.IsWalkable(p) && !m.IsActor(p)
 }
 
 // IsItem - returns true if there is an item in given position and point is in bounds.
 func (m *Map) IsItem(p geometry.Point) bool {
-	return m.InBounds(p) && m.itemGrid[p.Y][p.X] != 0
+	return m.InBounds(p) && m.ItemGrid[p.Y][p.X] != 0
 }
 
 // IsActor - returns true if there is an actor in given position and point is in bounds.
 func (m *Map) IsActor(p geometry.Point) bool {
-	return m.InBounds(p) && m.actorGrid[p.Y][p.X] != 0
+	return m.InBounds(p) && m.ActorGrid[p.Y][p.X] != 0
 }
 
 // IsDoor - returns true if the there is an open or closed door in given position and point is in bounds.
 func (m *Map) IsDoor(p geometry.Point) bool {
-	return m.InBounds(p) && (m.tileGrid[p.Y][p.X].Type == OpenDoor || m.tileGrid[p.Y][p.X].Type == ClosedDoor)
+	return m.InBounds(p) && (m.TileGrid[p.Y][p.X].Type == OpenDoor || m.TileGrid[p.Y][p.X].Type == ClosedDoor)
 }
 
 // IsOpenDoor - returns true if there is an open door in given position and point is in bounds.
 func (m *Map) IsOpenDoor(p geometry.Point) bool {
-	return m.InBounds(p) && m.tileGrid[p.Y][p.X].Type == OpenDoor
+	return m.InBounds(p) && m.TileGrid[p.Y][p.X].Type == OpenDoor
 }
 
 // IsVisible - returns true if the given tile is visible
 func (m *Map) IsVisible(p geometry.Point) bool {
-	return m.InBounds(p) && m.tileGrid[p.Y][p.X].Visibility == Visible
+	return m.InBounds(p) && m.TileGrid[p.Y][p.X].Visibility == Visible
 }
 
 //
@@ -263,7 +272,7 @@ func (m *Map) SetItem(p geometry.Point, id int) bool {
 		return false
 	}
 
-	m.itemGrid[p.Y][p.X] = id
+	m.ItemGrid[p.Y][p.X] = id
 	room, _ := m.GetRoomByPoint(p)
 
 	if id == 0 {
@@ -285,7 +294,7 @@ func (m *Map) SetActor(p geometry.Point, id int) bool {
 		return false
 	}
 
-	m.actorGrid[p.Y][p.X] = id
+	m.ActorGrid[p.Y][p.X] = id
 	room, _ := m.GetRoomByPoint(p)
 
 	if id == 0 {
@@ -295,13 +304,6 @@ func (m *Map) SetActor(p geometry.Point, id int) bool {
 	}
 
 	return true
-}
-
-// SetSeed - sets seed and creates new random generator.
-func (m *Map) SetSeed(seed int64) {
-	m.seed = seed
-	// nolint:gosec
-	m.rand = rand.New(rand.NewSource(seed))
 }
 
 //
@@ -318,25 +320,20 @@ func (m *Map) Move(src, dst geometry.Point) bool {
 		return false
 	}
 
-	if m.actorGrid[src.Y][src.X] == 0 {
+	if m.ActorGrid[src.Y][src.X] == 0 {
 		log.Printf("[ERROR] Can't move actor from %v to %v: %v is empty\n", src, dst, src)
 		return false
 	}
 
-	if m.actorGrid[dst.Y][dst.X] != 0 {
+	if m.ActorGrid[dst.Y][dst.X] != 0 {
 		log.Printf("[ERROR] Can't move actor from %v to %v: destination point %v is not empty\n", src, dst, src)
 		return false
 	}
 
-	m.actorGrid[dst.Y][dst.X] = m.actorGrid[src.Y][src.X]
-	m.actorGrid[src.Y][src.X] = 0
+	m.ActorGrid[dst.Y][dst.X] = m.ActorGrid[src.Y][src.X]
+	m.ActorGrid[src.Y][src.X] = 0
 
 	return true
-}
-
-// GenID - generates unique identifier.
-func (m *Map) GenID() int {
-	return m.idGen()
 }
 
 // RemoveItem - removes item from the map making given point available for future procedural generations or random extractions again.
@@ -355,8 +352,8 @@ func (m *Map) RemoveActor(p geometry.Point) bool {
 // This function reduces room capacity.
 // NOTE: the function does not generate or set id for item in global map item grid,
 // so the function IsItem(genPoint) returns false until you manually set the ID for generated point through SetItem(genPoint, id).
-func (m *Map) TakeRandomItemPoint(r *Room) (geometry.Point, bool) {
-	return m.takeRandomPoint(&r.emptyItemPoints, r.removeItemPoint)
+func (m *Map) TakeRandomItemPoint(r *Room, rng *rand.Rand) (geometry.Point, bool) {
+	return m.takeRandomPoint(&r.EmptyItemPoints, r.removeItemPoint, rng)
 }
 
 // TakeRandomActorPoint - consumes random empty point for actor from given room (item and actor can be together on one cell).
@@ -365,12 +362,12 @@ func (m *Map) TakeRandomItemPoint(r *Room) (geometry.Point, bool) {
 // This function reduces room capacity.
 // NOTE: the function does not generate or set id for actor in global map actor grid,
 // so the function IsActor(genPoint) returns false until you manually set the ID for generated point through SetActor(genPoint, id).
-func (m *Map) TakeRandomActorPoint(r *Room) (geometry.Point, bool) {
-	return m.takeRandomPoint(&r.emptyActorPoints, r.removeActorPoint)
+func (m *Map) TakeRandomActorPoint(r *Room, rng *rand.Rand) (geometry.Point, bool) {
+	return m.takeRandomPoint(&r.EmptyActorPoints, r.removeActorPoint, rng)
 }
 
 // takeRandomPoint - takes random point in room and make it unavailable to be generated again.
-func (m *Map) takeRandomPoint(pointsPtr *[]geometry.Point, removeFunc func(p geometry.Point)) (geometry.Point, bool) {
+func (m *Map) takeRandomPoint(pointsPtr *[]geometry.Point, removeFunc func(p geometry.Point), rng *rand.Rand) (geometry.Point, bool) {
 	points := *pointsPtr
 
 	// If there is no empty cell in room, can't take any point in room
@@ -378,20 +375,20 @@ func (m *Map) takeRandomPoint(pointsPtr *[]geometry.Point, removeFunc func(p geo
 		return geometry.Point{}, false
 	}
 
-	point := points[m.rand.Intn(len(points))] // Take random
-	removeFunc(point)                         // Do not forget to remove it from slice and map of empty points of room
+	point := points[rng.Intn(len(points))] // Take random
+	removeFunc(point)                      // Do not forget to remove it from slice and map of empty points of room
 
 	return point, true
 }
 
 // addItemPoint - adds empty point for item.
 func (r *Room) addItemPoint(p geometry.Point) {
-	addPoint(p, &r.emptyItemPoints, r.emptyItemPointsIndex)
+	addPoint(p, &r.EmptyItemPoints, r.emptyItemPointsIndex)
 }
 
 // addActorPoint - adds empty point for actor.
 func (r *Room) addActorPoint(p geometry.Point) {
-	addPoint(p, &r.emptyActorPoints, r.emptyActorPointsIndex)
+	addPoint(p, &r.EmptyActorPoints, r.emptyActorPointsIndex)
 }
 
 // addPoint - adds empty point.
@@ -408,12 +405,12 @@ func addPoint(p geometry.Point, s *[]geometry.Point, m map[geometry.Point]int) {
 
 // removeItemPoint - removes empty point for items.
 func (r *Room) removeItemPoint(p geometry.Point) {
-	removePoint(p, &r.emptyItemPoints, r.emptyItemPointsIndex)
+	removePoint(p, &r.EmptyItemPoints, r.emptyItemPointsIndex)
 }
 
 // removeActorPoint - removes empty point for actors.
 func (r *Room) removeActorPoint(p geometry.Point) {
-	removePoint(p, &r.emptyActorPoints, r.emptyActorPointsIndex)
+	removePoint(p, &r.EmptyActorPoints, r.emptyActorPointsIndex)
 }
 
 // removePoint - removes point.
@@ -445,14 +442,14 @@ func (m *Map) TryOpenDoor(p geometry.Point, keyColor DoorColor) bool {
 		return false
 	}
 
-	if m.tileGrid[p.Y][p.X].Type == OpenDoor {
+	if m.TileGrid[p.Y][p.X].Type == OpenDoor {
 		return true
 	}
 
 	door := m.doors[p]
-	if door.color == keyColor {
-		m.tileGrid[p.Y][p.X].Type = OpenDoor
-		door.locked = false
+	if door.Color == keyColor {
+		m.TileGrid[p.Y][p.X].Type = OpenDoor
+		door.Locked = false
 		return true
 	}
 
@@ -467,10 +464,10 @@ func (m *Map) UpdateVisibleArea(center geometry.Point, rad int) bool {
 		return false
 	}
 
-	for _, vc := range m.visibleCells {
-		m.tileGrid[vc.Y][vc.X].Visibility = Explored
+	for _, vc := range m.VisibleCells {
+		m.TileGrid[vc.Y][vc.X].Visibility = Explored
 	}
-	m.visibleCells = m.visibleCells[:0]
+	m.VisibleCells = m.VisibleCells[:0]
 
 	xc, yc := center.X, center.Y
 	x, y := 0, rad
@@ -508,17 +505,17 @@ func (m *Map) drawHorizontal(x1, x2, y int) {
 			continue
 		}
 
-		m.tileGrid[y][x].Visibility = Visible
-		m.visibleCells = append(m.visibleCells, geometry.Point{X: x, Y: y})
+		m.TileGrid[y][x].Visibility = Visible
+		m.VisibleCells = append(m.VisibleCells, geometry.Point{X: x, Y: y})
 	}
 }
 
 // ClearVisibleArea - clears visible area
 func (m *Map) ClearVisibleArea() {
-	for _, vc := range m.visibleCells {
-		m.tileGrid[vc.Y][vc.X].Visibility = Unexplored
+	for _, vc := range m.VisibleCells {
+		m.TileGrid[vc.Y][vc.X].Visibility = Unexplored
 	}
-	m.visibleCells = m.visibleCells[:0]
+	m.VisibleCells = m.VisibleCells[:0]
 }
 
 //
@@ -531,35 +528,35 @@ func (m *Map) ClearVisibleArea() {
 // gridWidth=3, gridHeight=3, doorsCount=3, keysCount=3, itemsCount=3, actorsCount=3.
 // Returns (map[itemID]itemPosition, map[actorID]actorPosition).
 // Automatically clears the previous level: topology, items, actors, doors, keys.
-func (m *Map) GenerateLevel() (map[int]geometry.Point, map[int]geometry.Point) {
-	return m.GenerateCustomLevel(3, 3, 3, 3, 3, 3)
+func (m *Map) GenerateLevel(rng *rand.Rand) (map[int]geometry.Point, map[int]geometry.Point) {
+	return m.GenerateCustomLevel(3, 3, 3, 3, 3, 3, rng)
 }
 
 // GenerateCustomLevel - generates map topology, lock doors and places door keys, spawns items and actor using custom settings.
 // Returns (map[itemID]itemPosition, map[actorID]actorPosition).
 // Automatically clears the previous level: topology, items, actors, doors, keys.
-func (m *Map) GenerateCustomLevel(gridWidth, gridHeight, doorsCount, keysCount, itemsCount, actorsCount int) (map[int]geometry.Point, map[int]geometry.Point) {
+func (m *Map) GenerateCustomLevel(gridWidth, gridHeight, doorsCount, keysCount, itemsCount, actorsCount int, rng *rand.Rand) (map[int]geometry.Point, map[int]geometry.Point) {
 	items := make(map[int]geometry.Point)
 	actors := make(map[int]geometry.Point)
 
 	m.ClearLevel()
 
-	generated := m.GenerateTopology(gridWidth, gridHeight)
+	generated := m.GenerateTopology(gridWidth, gridHeight, rng)
 	if !generated {
 		log.Fatalf("[ERROR] Can't generate level, grid too tight: gridWidth=%v gridHeight=%v\n", gridWidth, gridHeight)
 	}
 
-	genKeys := m.GenerateKeysAndDoors(doorsCount, keysCount)
+	genKeys := m.GenerateKeysAndDoors(doorsCount, keysCount, rng)
 	if genKeys != nil {
 		maps.Copy(items, genKeys)
 	}
 
-	genItems := m.GenerateItems(itemsCount)
+	genItems := m.GenerateItems(itemsCount, rng)
 	if genItems != nil {
 		maps.Copy(items, genItems)
 	}
 
-	genActors := m.GenerateActors(actorsCount)
+	genActors := m.GenerateActors(actorsCount, rng)
 	if genActors != nil {
 		maps.Copy(actors, genActors)
 	}
@@ -576,66 +573,64 @@ func (m *Map) ClearLevel() {
 	m.ClearTopology()
 	m.ClearItems()
 	m.ClearActors()
-	m.ResetIDGenerator()
 }
 
 // ClearTopology - clears topology and tile grid. Removes entrance and exit.
 func (m *Map) ClearTopology() {
-	clearMatrix(m.tileGrid)
-	m.entranceRoom = nil
-	m.exitRoom = nil
-	m.entrancePoint = geometry.Point{X: -1, Y: -1}
-	m.exitPoint = geometry.Point{X: -1, Y: -1}
+	clearMatrix(m.TileGrid)
+	m.EntranceRoomId = InvalidRoomId
+	m.ExitRoomId = InvalidRoomId
+	m.EntrancePoint = NewInvalidPoint()
+	m.ExitPoint = NewInvalidPoint()
 }
 
 // ClearItems - clears all items and updates capacity of all rooms making them empty again.
 // Does not remove entrance and exit point.
 // Entrance room points will not be available for participation in random point extractions or procedural generations after this function.
 func (m *Map) ClearItems() {
-	clearMatrix(m.itemGrid)
+	clearMatrix(m.ItemGrid)
 
-	for _, room := range m.rooms {
-		room.emptyItemPoints = room.emptyItemPoints[:0]
+	for _, room := range m.Rooms {
+		room.EmptyItemPoints = room.EmptyItemPoints[:0]
 		clear(room.emptyItemPointsIndex)
 
-		m.updateRoomEmptyPoints(room, room.addItemPoint, m.itemGrid)
+		m.updateRoomEmptyPoints(room, room.addItemPoint, m.ItemGrid)
 	}
 
-	if m.entranceRoom != nil {
-		m.entranceRoom.emptyItemPoints = m.entranceRoom.emptyItemPoints[:0]
-		clear(m.entranceRoom.emptyItemPointsIndex)
+	if m.EntranceRoomId != InvalidRoomId {
+		entranceRoom := m.roomMap[m.EntranceRoomId]
+		entranceRoom.EmptyItemPoints = entranceRoom.EmptyItemPoints[:0]
+		clear(entranceRoom.emptyItemPointsIndex)
 	}
 
-	if m.exitRoom != nil {
-		delete(m.exitRoom.emptyItemPointsIndex, m.exitPoint)
+	if m.ExitRoomId != InvalidRoomId {
+		exitRoom := m.roomMap[m.ExitRoomId]
+		delete(exitRoom.emptyItemPointsIndex, m.ExitPoint)
 	}
 }
 
 // ClearActors - clears all actors and updates capacity of all rooms making them empty again.
 // Entrance room points will not be available for participation in random point extractions or procedural generations after this function anyway.
 func (m *Map) ClearActors() {
-	clearMatrix(m.actorGrid)
+	clearMatrix(m.ActorGrid)
 
-	for _, room := range m.rooms {
-		room.emptyActorPoints = room.emptyActorPoints[:0]
+	for _, room := range m.Rooms {
+		room.EmptyActorPoints = room.EmptyActorPoints[:0]
 		clear(room.emptyActorPointsIndex)
 
-		m.updateRoomEmptyPoints(room, room.addActorPoint, m.actorGrid)
+		m.updateRoomEmptyPoints(room, room.addActorPoint, m.ActorGrid)
 	}
 
-	if m.entranceRoom != nil {
-		m.entranceRoom.emptyActorPoints = m.entranceRoom.emptyActorPoints[:0]
-		clear(m.entranceRoom.emptyActorPointsIndex)
+	if m.EntranceRoomId != InvalidRoomId {
+		entranceRoom := m.roomMap[m.EntranceRoomId]
+		entranceRoom.EmptyActorPoints = entranceRoom.EmptyActorPoints[:0]
+		clear(entranceRoom.emptyActorPointsIndex)
 	}
 
-	if m.exitRoom != nil {
-		delete(m.exitRoom.emptyActorPointsIndex, m.exitPoint)
+	if m.ExitRoomId != InvalidRoomId {
+		exitRoom := m.roomMap[m.ExitRoomId]
+		delete(exitRoom.emptyActorPointsIndex, m.ExitPoint)
 	}
-}
-
-// ResetIDGenerator - resets ID making it starts from 1 again.
-func (m *Map) ResetIDGenerator() {
-	m.idGen = m.generateID(0)
 }
 
 //
@@ -647,13 +642,13 @@ func (m *Map) ResetIDGenerator() {
 // Returns true if the topology was generated otherwise false.
 // Grid should be positive and satisfies the condition for the min possible room sizes (3x3),
 // so too big grid leads to impossibility of generation topology.
-func (m *Map) GenerateTopology(gridWidth, gridHeight int) bool {
+func (m *Map) GenerateTopology(gridWidth, gridHeight int, rng *rand.Rand) bool {
 	if !m.canFitGrid(gridWidth, gridHeight) {
 		return false
 	}
-	sectors := m.sectorization(gridWidth, gridHeight)
-	m.createRooms(sectors)
-	m.createEntranceAndExit()
+	sectors := m.sectorization(gridWidth, gridHeight, rng)
+	m.createRooms(sectors, rng)
+	m.createEntranceAndExit(rng)
 	m.connectRooms()
 	return true
 }
@@ -668,7 +663,7 @@ func (m *Map) canFitGrid(gridWidth, gridHeight int) bool {
 	minAllowedMapWidth := gridWidth*MinRoomSize + SectorMargin*numberWidthMargins
 	minAllowedMapHeight := gridHeight*MinRoomSize + SectorMargin*numberHeightMargins
 
-	if m.width < minAllowedMapWidth || m.height < minAllowedMapHeight {
+	if m.Cols < minAllowedMapWidth || m.Rows < minAllowedMapHeight {
 		return false
 	}
 
@@ -683,10 +678,10 @@ type Sector struct {
 // Function a grid of sector such that each sector has different sizes.
 // gridWidth - number of rooms horizontally, gridHeight - number of rooms vertically.
 // Returns matrix of sectors.
-func (m *Map) sectorization(gridWidth, gridHeight int) [][]Sector {
+func (m *Map) sectorization(gridWidth, gridHeight int, rng *rand.Rand) [][]Sector {
 	sectors := createMatrix[Sector](gridHeight, gridWidth)
-	sectorWidth, sectorWidthRem := m.width/gridWidth, m.width%gridWidth
-	sectorHeight, sectorHeightRem := m.height/gridHeight, m.height%gridHeight
+	sectorWidth, sectorWidthRem := m.Cols/gridWidth, m.Cols%gridWidth
+	sectorHeight, sectorHeightRem := m.Rows/gridHeight, m.Rows%gridHeight
 
 	heightRemLimit := make([]int, gridWidth) // Height remainder for each column
 	for h := range heightRemLimit {
@@ -704,7 +699,7 @@ func (m *Map) sectorization(gridWidth, gridHeight int) [][]Sector {
 				randHeightRemAdd = heightRemLimit[col]
 				yMax = yMins[col] + (sectorHeight - 1) + randHeightRemAdd
 			} else {
-				randHeightRemAdd = m.rand.Intn(heightRemLimit[col] + 1)
+				randHeightRemAdd = rng.Intn(heightRemLimit[col] + 1)
 				yMax = yMins[col] + (sectorHeight - 1) + randHeightRemAdd - SectorMargin
 			}
 			heightRemLimit[col] -= randHeightRemAdd
@@ -714,7 +709,7 @@ func (m *Map) sectorization(gridWidth, gridHeight int) [][]Sector {
 				randWidthRemAdd = widthRemLimit
 				xMax = xMin + (sectorWidth - 1) + randWidthRemAdd
 			} else {
-				randWidthRemAdd = m.rand.Intn(widthRemLimit + 1)
+				randWidthRemAdd = rng.Intn(widthRemLimit + 1)
 				xMax = xMin + (sectorWidth - 1) + randWidthRemAdd - SectorMargin
 			}
 			widthRemLimit -= randWidthRemAdd
@@ -729,10 +724,11 @@ func (m *Map) sectorization(gridWidth, gridHeight int) [][]Sector {
 }
 
 // createRooms - creates one room in every sector.
-func (m *Map) createRooms(sectors [][]Sector) {
+func (m *Map) createRooms(sectors [][]Sector, rng *rand.Rand) {
 	minHeight, minWidth := MinRoomSize, MinRoomSize
 	rows, cols := len(sectors), len(sectors[0])
-	m.rooms = make([]*Room, rows*cols)
+	m.Rooms = make([]*Room, rows*cols)
+	m.roomMap = make(map[RoomId]*Room)
 
 	// Create rooms
 	for row := range rows {
@@ -743,8 +739,8 @@ func (m *Map) createRooms(sectors [][]Sector) {
 			// Pick random height and width
 			sectorHeight := yMax - yMin + 1
 			sectorWidth := xMax - xMin + 1
-			roomHeight := minHeight + m.rand.Intn(sectorHeight-minHeight+1)
-			roomWidth := minWidth + m.rand.Intn(sectorWidth-minWidth+1)
+			roomHeight := minHeight + rng.Intn(sectorHeight-minHeight+1)
+			roomWidth := minWidth + rng.Intn(sectorWidth-minWidth+1)
 
 			// Interior space excluding the walls
 			utilHeight := roomHeight - 2
@@ -752,84 +748,88 @@ func (m *Map) createRooms(sectors [][]Sector) {
 			utilSquare := utilHeight * utilWidth
 
 			// Pick random pos (left-upper corner)
-			maxPossibleX := xMax - (roomWidth - 1)          //  Max possible X to take so that the room fits into the sector
-			maxPossibleY := yMax - (roomHeight - 1)         // Max possible Y to take so that the room fits into the sector
-			posX := xMin + m.rand.Intn(maxPossibleX-xMin+1) // Final X
-			posY := yMin + m.rand.Intn(maxPossibleY-yMin+1) // Final Y
-			utilX, utilY := posX+1, posY+1                  // left-upper corner in the room (floor cell)
+			maxPossibleX := xMax - (roomWidth - 1)       //  Max possible X to take so that the room fits into the sector
+			maxPossibleY := yMax - (roomHeight - 1)      // Max possible Y to take so that the room fits into the sector
+			posX := xMin + rng.Intn(maxPossibleX-xMin+1) // Final X
+			posY := yMin + rng.Intn(maxPossibleY-yMin+1) // Final Y
+			utilX, utilY := posX+1, posY+1               // left-upper corner in the room (floor cell)
 
 			// Assemble
 			room := &Room{
-				id:     row*cols + col,
-				pos:    geometry.Point{X: utilX, Y: utilY},
-				width:  utilWidth,
-				height: utilHeight,
-				center: geometry.Point{
+				Id:   RoomId(row*cols + col + 1),
+				Pos:  geometry.Point{X: utilX, Y: utilY},
+				Cols: utilWidth,
+				Rows: utilHeight,
+				Center: geometry.Point{
 					X: utilX + utilWidth/2,
 					Y: utilY + utilHeight/2,
 				},
-				emptyItemPoints:       make([]geometry.Point, 0, utilSquare),
+				EmptyItemPoints:       make([]geometry.Point, 0, utilSquare),
 				emptyItemPointsIndex:  make(map[geometry.Point]int, utilSquare),
-				emptyActorPoints:      make([]geometry.Point, 0, utilSquare),
+				EmptyActorPoints:      make([]geometry.Point, 0, utilSquare),
 				emptyActorPointsIndex: make(map[geometry.Point]int, utilSquare),
 			}
-			m.rooms[row*cols+col] = room
+			m.Rooms[row*cols+col] = room
+			m.roomMap[room.Id] = room
 		}
 	}
 
 	// Add rooms to the tile grid
-	for _, room := range m.rooms {
-		wallYMin, wallXMin := room.pos.Y-1, room.pos.X-1
-		wallYMax, wallXMax := wallYMin+room.height+1, wallXMin+room.width+1
+	for _, room := range m.Rooms {
+		wallYMin, wallXMin := room.Pos.Y-1, room.Pos.X-1
+		wallYMax, wallXMax := wallYMin+room.Rows+1, wallXMin+room.Cols+1
 
 		for y := wallYMin; y <= wallYMax; y++ {
 			for x := wallXMin; x <= wallXMax; x++ {
-				tile := &m.tileGrid[y][x]
-				tile.room = room
+				tile := &m.TileGrid[y][x]
+				tile.RoomId = room.Id
 
 				if y == wallYMin || y == wallYMax || x == wallXMin || x == wallXMax {
 					tile.Type = Wall
 				} else {
 					tile.Type = Floor
 
-					room.emptyItemPoints = append(room.emptyItemPoints, geometry.Point{X: x, Y: y})
-					room.emptyItemPointsIndex[geometry.Point{X: x, Y: y}] = len(room.emptyItemPoints) - 1
-					room.emptyActorPoints = append(room.emptyActorPoints, geometry.Point{X: x, Y: y})
-					room.emptyActorPointsIndex[geometry.Point{X: x, Y: y}] = len(room.emptyActorPoints) - 1
+					room.EmptyItemPoints = append(room.EmptyItemPoints, geometry.Point{X: x, Y: y})
+					room.emptyItemPointsIndex[geometry.Point{X: x, Y: y}] = len(room.EmptyItemPoints) - 1
+					room.EmptyActorPoints = append(room.EmptyActorPoints, geometry.Point{X: x, Y: y})
+					room.emptyActorPointsIndex[geometry.Point{X: x, Y: y}] = len(room.EmptyActorPoints) - 1
 				}
 			}
 		}
 	}
-
-	// Make the order of rooms random
-	shuffle(m.rand, m.rooms)
 }
 
 // createEntranceAndExit - chooses one random room to be entrance and one room to be exited. Generates there entrance and exit points.
-func (m *Map) createEntranceAndExit() {
-	entryInd, exitInd := 0, 0 // If we have only one room, same room will be entrance and exit
+func (m *Map) createEntranceAndExit(rng *rand.Rand) {
+	// Make the order of rooms random
+	shuffle(rng, m.Rooms)
 
-	if len(m.rooms) > 1 {
-		entryInd = m.rand.Intn(len(m.rooms) - 1)
+	entryInd, exitInd := 0, 0 // If we have only one room, same room will be entrance and exit
+	entranceRoom, exitRoom := m.Rooms[0], m.Rooms[0]
+
+	if len(m.Rooms) > 1 {
+		entryInd = rng.Intn(len(m.Rooms) - 1)
 		exitInd = entryInd + 1
+		entranceRoom = m.Rooms[entryInd]
+		exitRoom = m.Rooms[exitInd]
 	}
 
-	m.entranceRoom, m.exitRoom = m.rooms[entryInd], m.rooms[exitInd]
-	m.entrancePoint, _ = m.TakeRandomItemPoint(m.entranceRoom)
-	m.exitPoint, _ = m.TakeRandomItemPoint(m.exitRoom)
-	m.tileGrid[m.exitPoint.Y][m.exitPoint.X].Type = Exit
+	m.EntranceRoomId, m.ExitRoomId = entranceRoom.Id, exitRoom.Id
+	m.EntrancePoint, _ = m.TakeRandomItemPoint(entranceRoom, rng)
+	m.ExitPoint, _ = m.TakeRandomItemPoint(exitRoom, rng)
+	m.TileGrid[m.ExitPoint.Y][m.ExitPoint.X].Type = Exit
 
 	// Prohibit actor spawn at entrance and exit point
-	m.entranceRoom.removeActorPoint(m.entrancePoint)
-	m.exitRoom.removeActorPoint(m.exitPoint)
+	entranceRoom.removeActorPoint(m.EntrancePoint)
+	exitRoom.removeActorPoint(m.ExitPoint)
 
 	// Delete all empty item points from entrance
-	m.entranceRoom.emptyItemPoints = m.entranceRoom.emptyItemPoints[:0]
-	clear(m.entranceRoom.emptyItemPointsIndex)
+	entranceRoom.EmptyItemPoints = entranceRoom.EmptyItemPoints[:0]
+	clear(entranceRoom.emptyItemPointsIndex)
 
 	// Delete all empty actor points from entrance
-	m.entranceRoom.emptyActorPoints = m.entranceRoom.emptyActorPoints[:0]
-	clear(m.entranceRoom.emptyActorPointsIndex)
+	entranceRoom.EmptyActorPoints = entranceRoom.EmptyActorPoints[:0]
+	clear(entranceRoom.emptyActorPointsIndex)
 }
 
 // connectRooms - digs corridor between two room centers using A* algorithm.
@@ -837,10 +837,9 @@ func (m *Map) createEntranceAndExit() {
 // so map can be very interesting.
 func (m *Map) connectRooms() {
 	m.doors = make(map[geometry.Point]*DoorMetadata)
-	m.corridors = make(map[geometry.Point]struct{})
 
-	for i := 0; i < len(m.rooms)-1; i++ {
-		path, ok := m.findDiggingPath(m.rooms[i], m.rooms[i+1]) // A* algorithm
+	for i := 0; i < len(m.Rooms)-1; i++ {
+		path, ok := m.findDiggingPath(m.Rooms[i], m.Rooms[i+1]) // A* algorithm
 
 		if !ok {
 			log.Fatalf("[ERROR] Could not find digging path between room #%d and room #%d", i, i+1)
@@ -848,17 +847,17 @@ func (m *Map) connectRooms() {
 
 		for _, p := range path {
 			x, y := p.X, p.Y
-			tile := &m.tileGrid[y][x]
+			tile := &m.TileGrid[y][x]
 
 			switch tile.Type {
 			case Empty:
 				tile.Type = Corridor
-				m.corridors[p] = struct{}{}
 			case Wall:
 				tile.Type = OpenDoor
-				door := &DoorMetadata{pos: p}
+				door := &DoorMetadata{Pos: p}
 				m.doors[p] = door
-				tile.room.doors = append(tile.room.doors, door)
+				doorHolder := m.roomMap[tile.RoomId]
+				doorHolder.Doors = append(doorHolder.Doors, door)
 			default:
 			}
 		}
@@ -871,7 +870,7 @@ func (m *Map) findDiggingPath(r1, r2 *Room) ([]geometry.Point, bool) {
 		return nil, false
 	}
 
-	path := algorithm.FindPath[geometry.Point](m, r1.center, r2.center, m.getDiggingCost)
+	path := algorithm.FindPath[geometry.Point](m, r1.Center, r2.Center, m.getDiggingCost)
 	if path == nil {
 		return nil, false
 	}
@@ -881,7 +880,7 @@ func (m *Map) findDiggingPath(r1, r2 *Room) ([]geometry.Point, bool) {
 
 // getDiggingCost - cost function for A* algorithm.
 func (m *Map) getDiggingCost(p geometry.Point) float64 {
-	tile := m.tileGrid[p.Y][p.X].Type
+	tile := m.TileGrid[p.Y][p.X].Type
 	cost := 0.0
 
 	switch tile {
@@ -902,7 +901,7 @@ func (m *Map) getDiggingCost(p geometry.Point) float64 {
 	if tile == Empty {
 		for _, n := range getNeighborList(p) {
 			if m.InBounds(n) {
-				nt := m.tileGrid[n.Y][n.X].Type
+				nt := m.TileGrid[n.Y][n.X].Type
 				if nt == Wall || nt == Corridor {
 					cost += 5.0
 				}
@@ -976,22 +975,24 @@ type Edge struct {
 // if doorsCount is greater than total number of doors, algorithm will block all found bridges on the map;
 // if doorsCount < 0 || keysCount < 0, nil will be returned.
 // Algorithm does not block loop edges.
-func (m *Map) GenerateKeysAndDoors(doorsCount, keysCount int) map[int]geometry.Point {
+func (m *Map) GenerateKeysAndDoors(doorsCount, keysCount int, rng *rand.Rand) map[int]geometry.Point {
 	if doorsCount <= 0 || keysCount <= 0 {
 		log.Printf("[INFO] Given doorsCount=%d, keysCount=%d but expected doorsCount>0 and keysCount>0", doorsCount, keysCount)
 		return nil
 	}
 
+	entranceRoom := m.roomMap[m.EntranceRoomId]
+
 	usedCells := make(map[NavNode]int)
 
 	nm := m.createNavMap()
-	topology := nm.analyzeTopology(m.entranceRoom, usedCells)
+	topology := nm.analyzeTopology(entranceRoom, usedCells)
 
 	getAvailableEdges := func(topology *TopologyData) []*Edge {
 		availableEdges := make([]*Edge, 0, len(topology.Bridges))
 		for edge := range topology.Bridges {
 			// Don't block doors in start room
-			if edge.src != m.entranceRoom && edge.dst != m.entranceRoom {
+			if edge.src != entranceRoom && edge.dst != entranceRoom {
 				availableEdges = append(availableEdges, edge)
 			}
 		}
@@ -1006,16 +1007,16 @@ func (m *Map) GenerateKeysAndDoors(doorsCount, keysCount int) map[int]geometry.P
 			return 0
 		})
 		// Make the order random using local random generator
-		shuffle(m.rand, availableEdges)
+		shuffle(rng, availableEdges)
 		return availableEdges
 	}
 
 	validKeysCount := min(doorsCount, keysCount)
 	validDoorsCount := min(validKeysCount, len(m.doors))
-	doorsForKey := m.getDoorsForKey(validDoorsCount, validKeysCount)
+	doorsForKey := m.getDoorsForKey(validDoorsCount, validKeysCount, rng)
 
 	spawnedKeys := make(map[int]geometry.Point, validDoorsCount)
-	curKeyID := m.idGen()
+	curKeyID := idgen.Next()
 
 	for k := 0; k < validKeysCount; k++ {
 		numDoors := doorsForKey[k]          // Get number of doors to be blocked by current key
@@ -1027,8 +1028,8 @@ func (m *Map) GenerateKeysAndDoors(doorsCount, keysCount int) map[int]geometry.P
 		for door := 0; door < numDoors; door++ {
 			availableEdges := getAvailableEdges(topology)
 
-			totalCapacity := topology.SubtreeCapacity[m.entranceRoom]
-			totalDoors := topology.SubtreeDoors[m.entranceRoom]
+			totalCapacity := topology.SubtreeCapacity[entranceRoom]
+			totalDoors := topology.SubtreeDoors[entranceRoom]
 
 			if len(availableEdges) == 0 {
 				break
@@ -1084,7 +1085,7 @@ func (m *Map) GenerateKeysAndDoors(doorsCount, keysCount int) map[int]geometry.P
 			curLockedEdges = append(curLockedEdges, selectedEdge)
 
 			nm.deleteEdge(selectedEdge)
-			topology = nm.analyzeTopology(m.entranceRoom, usedCells)
+			topology = nm.analyzeTopology(entranceRoom, usedCells)
 		}
 
 		// If we couldn't find any edge to lock, stop the locking algorithm:
@@ -1094,15 +1095,15 @@ func (m *Map) GenerateKeysAndDoors(doorsCount, keysCount int) map[int]geometry.P
 		}
 
 		// Define the rooms where we can the spawn the door key
-		availableRooms := make([]*Room, 0, len(m.rooms))
-		for _, r := range m.rooms {
+		availableRooms := make([]*Room, 0, len(m.Rooms))
+		for _, r := range m.Rooms {
 			// Check if the room is in locked subtree
 			if _, reachable := topology.EntryTime[r]; !reachable {
 				continue
 			}
 
 			// If there is no space or consumed all the available cells
-			if r == m.entranceRoom || usedCells[r] >= MaxKeysForRoom {
+			if r == entranceRoom || usedCells[r] >= MaxKeysForRoom {
 				continue
 			}
 
@@ -1114,8 +1115,8 @@ func (m *Map) GenerateKeysAndDoors(doorsCount, keysCount int) map[int]geometry.P
 			} else {
 				// We are looking at how the spawn will affect subsequent locks
 				usedCells[r]++
-				testTopology := nm.analyzeTopology(m.entranceRoom, usedCells)
-				totalCapacity := testTopology.SubtreeCapacity[m.entranceRoom]
+				testTopology := nm.analyzeTopology(entranceRoom, usedCells)
+				totalCapacity := testTopology.SubtreeCapacity[entranceRoom]
 
 				for bridge := range testTopology.Bridges {
 					var node NavNode
@@ -1148,40 +1149,40 @@ func (m *Map) GenerateKeysAndDoors(doorsCount, keysCount int) map[int]geometry.P
 		}
 
 		// Spawn the key in any available room
-		keyRoom := availableRooms[m.rand.Intn(len(availableRooms))]
-		keyPos, _ := m.TakeRandomItemPoint(keyRoom)
-		m.itemGrid[keyPos.Y][keyPos.X] = curKeyID
+		keyRoom := availableRooms[rng.Intn(len(availableRooms))]
+		keyPos, _ := m.TakeRandomItemPoint(keyRoom, rng)
+		m.ItemGrid[keyPos.Y][keyPos.X] = curKeyID
 		spawnedKeys[curKeyID] = keyPos
 
 		usedCells[keyRoom]++
-		topology = nm.analyzeTopology(m.entranceRoom, usedCells)
+		topology = nm.analyzeTopology(entranceRoom, usedCells)
 
 		// Truly lock all the selected edges
 		for _, doorEdge := range curLockedEdges {
 			door := doorEdge.door
 
 			// Lock the door
-			door.locked = true
-			door.color = DoorColor(curKeyID)
-			door.keyPos = keyPos // Save the door key position
-			m.tileGrid[door.pos.Y][door.pos.X].Type = ClosedDoor
+			door.Locked = true
+			door.Color = DoorColor(curKeyID)
+			door.KeyPos = keyPos // Save the door key position
+			m.TileGrid[door.Pos.Y][door.Pos.X].Type = ClosedDoor
 		}
 
-		curKeyID = m.idGen()
+		curKeyID = idgen.Next()
 	}
 
 	return spawnedKeys
 }
 
 // getDoorsForKey - returns number of doors which key can block for every key
-func (m *Map) getDoorsForKey(doorsCount, keysCount int) []int {
+func (m *Map) getDoorsForKey(doorsCount, keysCount int, rng *rand.Rand) []int {
 	doorsForKey := make([]int, keysCount)
 
 	for i := 0; i < keysCount; i++ {
 		doorsForKey[i] = doorsCount / keysCount
 	}
 
-	perm := m.rand.Perm(keysCount)
+	perm := rng.Perm(keysCount)
 
 	for i := 0; i < doorsCount%keysCount; i++ {
 		doorsForKey[perm[i]]++
@@ -1202,9 +1203,9 @@ func (m *Map) createNavMap() NavMap {
 	hubs := m.findCorridorHubs()
 	edgeID := 0
 
-	for _, room := range m.rooms {
-		for _, door := range room.doors {
-			hub := m.getHubConnectedToDoor(hubs, door.pos)
+	for _, room := range m.Rooms {
+		for _, door := range room.Doors {
+			hub := m.getHubConnectedToDoor(hubs, door.Pos)
 			if hub != nil {
 				abEdge := &Edge{
 					id:   edgeID,
@@ -1238,19 +1239,19 @@ func (m *Map) createNavMap() NavMap {
 // findCorridorHubs - finds all corridors between rooms.
 // CorridorHub can be simply connection of two rooms or the main artery of the map that unites many rooms
 func (m *Map) findCorridorHubs() []*CorridorHub {
-	availableCorridors := maps.Clone(m.corridors)
+	availableCorridors := m.getCorridorTiles()
 	hubs := make([]*CorridorHub, 0)
-	id := len(m.rooms)
+	id := len(m.Rooms)
 
 	for len(availableCorridors) > 0 {
-		var point geometry.Point
-		for point = range availableCorridors {
-			break
-		}
+		point := availableCorridors[0]
+		restCorridors := availableCorridors[:0]
 
 		hubPoints := m.floodFill(point)
-		for point = range hubPoints {
-			delete(availableCorridors, point)
+		for _, p := range availableCorridors {
+			if _, exists := hubPoints[p]; !exists {
+				restCorridors = append(restCorridors, p)
+			}
 		}
 
 		hubs = append(hubs, &CorridorHub{
@@ -1259,9 +1260,24 @@ func (m *Map) findCorridorHubs() []*CorridorHub {
 		})
 
 		id++
+		availableCorridors = restCorridors
 	}
 
 	return hubs
+}
+
+func (m *Map) getCorridorTiles() []geometry.Point {
+	corridorTiles := make([]geometry.Point, 0, 32)
+
+	for r := 0; r < m.Rows; r++ {
+		for c := 0; c < m.Cols; c++ {
+			if m.TileGrid[r][c].Type == Corridor {
+				corridorTiles = append(corridorTiles, geometry.Point{X: c, Y: r})
+			}
+		}
+	}
+
+	return corridorTiles
 }
 
 // floodFill - classic BFS flood fill algorithm
@@ -1269,7 +1285,7 @@ func (m *Map) floodFill(start geometry.Point) map[geometry.Point]struct{} {
 	visited := make(map[geometry.Point]bool)
 	visited[start] = true
 	queue := []geometry.Point{start}
-	startTile := m.tileGrid[start.Y][start.X].Type // Fill in only the cells having the type of the first cell
+	startTile := m.TileGrid[start.Y][start.X].Type // Fill in only the cells having the type of the first cell
 
 	filled := map[geometry.Point]struct{}{}
 
@@ -1279,7 +1295,7 @@ func (m *Map) floodFill(start geometry.Point) map[geometry.Point]struct{} {
 		filled[cur] = struct{}{}
 
 		for _, n := range getNeighborList(cur) {
-			if m.InBounds(n) && m.tileGrid[n.Y][n.X].Type == startTile && !visited[n] {
+			if m.InBounds(n) && m.TileGrid[n.Y][n.X].Type == startTile && !visited[n] {
 				visited[n] = true
 				queue = append(queue, n)
 			}
@@ -1395,31 +1411,31 @@ func (nm NavMap) analyzeTopology(src NavNode, usedCells map[NavNode]int) *Topolo
 // GenerateItems - spawns items in all rooms except the start one.
 // Returns map[itemID]itemPosition.
 // If n is greater than the number of all available cells for items on the map, algorithm will place as many as possible items.
-func (m *Map) GenerateItems(n int) map[int]geometry.Point {
-	return m.generateObjects(n, m.itemGrid, func(r *Room) int { return len(r.emptyItemPointsIndex) }, m.TakeRandomItemPoint)
+func (m *Map) GenerateItems(n int, rng *rand.Rand) map[int]geometry.Point {
+	return m.generateObjects(n, m.ItemGrid, func(r *Room) int { return len(r.emptyItemPointsIndex) }, m.TakeRandomItemPoint, rng)
 }
 
 // GenerateActors - spawns actors in all rooms except the start one.
 // Returns map[actorID]actorPosition.
 // If n is greater than the number of all available cells for actors on the map, algorithm will place as many as possible actors.
-func (m *Map) GenerateActors(n int) map[int]geometry.Point {
-	return m.generateObjects(n, m.actorGrid, func(r *Room) int { return len(r.emptyActorPointsIndex) }, m.TakeRandomActorPoint)
+func (m *Map) GenerateActors(n int, rng *rand.Rand) map[int]geometry.Point {
+	return m.generateObjects(n, m.ActorGrid, func(r *Room) int { return len(r.emptyActorPointsIndex) }, m.TakeRandomActorPoint, rng)
 }
 
 // generateObjects - common algorithm for items and actors.
-func (m *Map) generateObjects(n int, grid [][]int, getRoomCapacity func(*Room) int, getRandomPoint func(*Room) (geometry.Point, bool)) map[int]geometry.Point {
+func (m *Map) generateObjects(n int, grid [][]int, getRoomCapacity func(*Room) int, getRandomPoint func(*Room, *rand.Rand) (geometry.Point, bool), rng *rand.Rand) map[int]geometry.Point {
 	if n <= 0 {
 		log.Printf("[INFO] No object was generated due to n=%v\n", n)
 		return nil
 	}
 
 	points := make(map[int]geometry.Point, n)
-	primaryRoomList := make([]*Room, 0, len(m.rooms))
-	availableRoomsPrime := make(map[*Room]int, len(m.rooms)) // Map stores number of points in primary pool for each room
-	availableRoomsRes := make(map[*Room]int, len(m.rooms))   // Map stores number of points in reserve pool for each room
+	primaryRoomList := make([]*Room, 0, len(m.Rooms))
+	availableRoomsPrime := make(map[*Room]int, len(m.Rooms)) // Map stores number of points in primary pool for each room
+	availableRoomsRes := make(map[*Room]int, len(m.Rooms))   // Map stores number of points in reserve pool for each room
 
-	for _, room := range m.rooms {
-		if room == m.entranceRoom {
+	for _, room := range m.Rooms {
+		if room == m.roomMap[m.EntranceRoomId] {
 			continue
 		}
 
@@ -1443,7 +1459,7 @@ func (m *Map) generateObjects(n int, grid [][]int, getRoomCapacity func(*Room) i
 	// so some rooms can have many items, some none of them,
 	// but do not use more than PrimaryPoolMultiplier of available cells in the room
 	for len(availableRoomsPrime) > 0 && spawned < n {
-		roomInd := m.rand.Intn(len(primaryRoomList))
+		roomInd := rng.Intn(len(primaryRoomList))
 		room := primaryRoomList[roomInd]
 
 		rest := availableRoomsPrime[room]
@@ -1452,8 +1468,8 @@ func (m *Map) generateObjects(n int, grid [][]int, getRoomCapacity func(*Room) i
 			break
 		}
 
-		point, _ := getRandomPoint(room)
-		id := m.idGen()
+		point, _ := getRandomPoint(room, rng)
+		id := idgen.Next()
 
 		points[id] = point
 		grid[point.Y][point.X] = id
@@ -1482,8 +1498,8 @@ func (m *Map) generateObjects(n int, grid [][]int, getRoomCapacity func(*Room) i
 				break
 			}
 
-			point, _ := getRandomPoint(room)
-			id := m.idGen()
+			point, _ := getRandomPoint(room, rng)
+			id := idgen.Next()
 
 			points[id] = point
 			grid[point.Y][point.X] = id
@@ -1504,6 +1520,68 @@ func (m *Map) generateObjects(n int, grid [][]int, getRoomCapacity func(*Room) i
 
 //
 //
+// --- FOR ACTORS AI ---
+//
+//
+
+func (m *Map) GenerateScentMap(points []geometry.Point) [][]int {
+	scentMap := createMatrix[int](m.Rows, m.Cols)
+	fillMatrix(scentMap, math.MaxInt)
+
+	queue := points
+
+	for _, p := range points {
+		scentMap[p.Y][p.X] = 0
+	}
+
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+
+		for _, dir := range geometry.GetAllDirs() {
+			n := cur.Add(dir)
+
+			if m.IsWalkable(n) && scentMap[n.Y][n.X] == math.MaxInt {
+				scentMap[n.Y][n.X] = scentMap[cur.Y][cur.X] + 1
+				queue = append(queue, n)
+			}
+		}
+	}
+
+	return scentMap
+}
+
+//
+//
+// --- SAVE/LOAD GAME METHODS ---
+//
+//
+
+func (m *Map) RebuildCache() {
+	m.doors = make(map[geometry.Point]*DoorMetadata)
+	m.roomMap = make(map[RoomId]*Room)
+
+	for _, room := range m.Rooms {
+		m.roomMap[room.Id] = room
+
+		room.emptyItemPointsIndex = make(map[geometry.Point]int)
+		for i, p := range room.EmptyItemPoints {
+			room.emptyItemPointsIndex[p] = i
+		}
+
+		room.emptyActorPointsIndex = make(map[geometry.Point]int)
+		for i, p := range room.EmptyActorPoints {
+			room.emptyActorPointsIndex[p] = i
+		}
+
+		for _, door := range room.Doors {
+			m.doors[door.Pos] = door
+		}
+	}
+}
+
+//
+//
 // --- LOOT MANAGEMENT ---
 //
 //
@@ -1520,8 +1598,8 @@ func (m *Map) SpawnLoot(p geometry.Point, rad int) (int, geometry.Point, bool) {
 		return 0, geometry.Point{}, false
 	}
 
-	id := m.idGen()
-	m.itemGrid[lootPoint.Y][lootPoint.X] = id
+	id := idgen.Next()
+	m.ItemGrid[lootPoint.Y][lootPoint.X] = id
 
 	return id, lootPoint, true
 }
@@ -1546,17 +1624,17 @@ func (m *Map) FindLootPoint(center geometry.Point, rad int) (geometry.Point, boo
 
 	x, y := center.X, center.Y
 
-	if m.itemGrid[y][x] == 0 {
+	if m.ItemGrid[y][x] == 0 {
 		return center, true
 	}
 
-	roomYMin, roomYMax := room.pos.Y, room.pos.Y+room.height-1
-	roomXMin, roomXMax := room.pos.X, room.pos.X+room.width-1
+	roomYMin, roomYMax := room.Pos.Y, room.Pos.Y+room.Rows-1
+	roomXMin, roomXMax := room.Pos.X, room.Pos.X+room.Cols-1
 
 	limit := rad
 
 	if rad < 0 {
-		limit = max(room.width, room.height)
+		limit = max(room.Cols, room.Rows)
 	}
 
 	for r := 1; r <= limit; r++ {
@@ -1572,7 +1650,7 @@ func (m *Map) FindLootPoint(center geometry.Point, rad int) (geometry.Point, boo
 
 		if frameYMin >= roomYMin {
 			for i := validXMin; i <= validXMax; i++ {
-				if m.tileGrid[frameYMin][i].Type == Floor && m.itemGrid[frameYMin][i] == 0 {
+				if m.TileGrid[frameYMin][i].Type == Floor && m.ItemGrid[frameYMin][i] == 0 {
 					return geometry.Point{X: i, Y: frameYMin}, true
 				}
 			}
@@ -1580,7 +1658,7 @@ func (m *Map) FindLootPoint(center geometry.Point, rad int) (geometry.Point, boo
 
 		if frameYMax <= roomYMax {
 			for i := validXMin; i <= validXMax; i++ {
-				if m.tileGrid[frameYMax][i].Type == Floor && m.itemGrid[frameYMax][i] == 0 {
+				if m.TileGrid[frameYMax][i].Type == Floor && m.ItemGrid[frameYMax][i] == 0 {
 					return geometry.Point{X: i, Y: frameYMax}, true
 				}
 			}
@@ -1588,7 +1666,7 @@ func (m *Map) FindLootPoint(center geometry.Point, rad int) (geometry.Point, boo
 
 		if frameXMin >= roomXMin {
 			for i := validYMin; i <= validYMax; i++ {
-				if m.tileGrid[i][frameXMin].Type == Floor && m.itemGrid[i][frameXMin] == 0 {
+				if m.TileGrid[i][frameXMin].Type == Floor && m.ItemGrid[i][frameXMin] == 0 {
 					return geometry.Point{X: frameXMin, Y: i}, true
 				}
 			}
@@ -1596,7 +1674,7 @@ func (m *Map) FindLootPoint(center geometry.Point, rad int) (geometry.Point, boo
 
 		if frameXMax <= roomXMax {
 			for i := validYMin; i <= validYMax; i++ {
-				if m.tileGrid[i][frameXMax].Type == Floor && m.itemGrid[i][frameXMax] == 0 {
+				if m.TileGrid[i][frameXMax].Type == Floor && m.ItemGrid[i][frameXMax] == 0 {
 					return geometry.Point{X: frameXMax, Y: i}, true
 				}
 			}
@@ -1633,7 +1711,7 @@ func (m *Map) FindPath(p1, p2 geometry.Point) ([]geometry.Point, bool) {
 // getFollowingCost - cost function to find the way between points inside the game map: floors, open doors, corridors.
 func (m *Map) getFollowingCost(p geometry.Point) float64 {
 	x, y := p.X, p.Y
-	tile := m.tileGrid[p.Y][p.X].Type
+	tile := m.TileGrid[p.Y][p.X].Type
 	cost := 0.0
 
 	switch tile {
@@ -1643,7 +1721,7 @@ func (m *Map) getFollowingCost(p geometry.Point) float64 {
 		cost = math.Inf(1)
 	}
 
-	if m.itemGrid[y][x] != 0 || m.actorGrid[y][x] != 0 {
+	if m.ItemGrid[y][x] != 0 || m.ActorGrid[y][x] != 0 {
 		cost += 5.0
 	}
 
@@ -1700,6 +1778,15 @@ func clearMatrix[T any](matrix [][]T) {
 	}
 }
 
+// fillMatrix - fills matrix using given value
+func fillMatrix[T any](matrix [][]T, val T) {
+	for i := range len(matrix) {
+		for j := range len(matrix[i]) {
+			matrix[i][j] = val
+		}
+	}
+}
+
 // generateID - generates uniques IDs
 func (m *Map) generateID(startID int) func() int {
 	return func() int {
@@ -1728,8 +1815,8 @@ func shuffle[T any](r *rand.Rand, s []T) {
 
 // updateRoomEmptyPoints - finds empty points in the given room
 func (m *Map) updateRoomEmptyPoints(room *Room, addPoint func(p geometry.Point), grid [][]int) {
-	for i := room.pos.Y; i < room.pos.Y+room.height; i++ {
-		for j := room.pos.X; j < room.pos.X+room.width; j++ {
+	for i := room.Pos.Y; i < room.Pos.Y+room.Rows; i++ {
+		for j := room.Pos.X; j < room.Pos.X+room.Cols; j++ {
 			if grid[i][j] == 0 {
 				addPoint(geometry.Point{X: j, Y: i})
 			}
@@ -1764,17 +1851,17 @@ func (m *Map) String() string {
 
 	keys := make(map[geometry.Point]struct{})
 	for _, door := range m.doors {
-		if door.locked {
-			keys[door.keyPos] = struct{}{}
+		if door.Locked {
+			keys[door.KeyPos] = struct{}{}
 		}
 	}
 
 	var sb strings.Builder
 
-	for row := range m.tileGrid {
-		for col := range m.tileGrid[row] {
+	for row := range m.TileGrid {
+		for col := range m.TileGrid[row] {
 			var ch rune
-			tile := m.tileGrid[row][col].Type
+			tile := m.TileGrid[row][col].Type
 
 			switch tile {
 			case Wall:
@@ -1784,7 +1871,7 @@ func (m *Map) String() string {
 			case OpenDoor:
 				ch = '/'
 			case ClosedDoor:
-				keyID := int(m.doors[geometry.Point{X: col, Y: row}].color)
+				keyID := int(m.doors[geometry.Point{X: col, Y: row}].Color)
 				colorIndex := keyID % len(colors)
 				sb.WriteString(colors[colorIndex])
 				ch = '%'
@@ -1796,11 +1883,11 @@ func (m *Map) String() string {
 				ch = ' '
 			}
 
-			if row == m.entrancePoint.Y && col == m.entrancePoint.X {
+			if row == m.EntrancePoint.Y && col == m.EntrancePoint.X {
 				ch = '@'
 			}
 
-			itemID := m.itemGrid[row][col]
+			itemID := m.ItemGrid[row][col]
 
 			if _, isKeyPos := keys[geometry.Point{X: col, Y: row}]; isKeyPos {
 				colorIndex := itemID % len(colors)
@@ -1810,7 +1897,7 @@ func (m *Map) String() string {
 				ch = 'I'
 			}
 
-			if m.actorGrid[row][col] != 0 {
+			if m.ActorGrid[row][col] != 0 {
 				ch = 'A'
 			}
 
@@ -1827,11 +1914,6 @@ func (m *Map) String() string {
 // -- Room methods --
 //
 
-// GetRoomsCount - wrap on len function
-func (m *Map) GetRoomsCount() int {
-	return len(m.rooms)
-}
-
 // GetRoomByPoint - returns room by point (like by coordinates)
 // Returns (pointer, true) to the room where the given point is located
 // Returns (nil, false) if point is outside any room
@@ -1840,16 +1922,19 @@ func (m *Map) GetRoomByPoint(pos geometry.Point) (*Room, bool) {
 		return nil, false
 	}
 
-	room := m.tileGrid[pos.Y][pos.X].room
-	return room, room != nil
+	roomId := m.TileGrid[pos.Y][pos.X].RoomId
+	if roomId == 0 {
+		return nil, false
+	}
+	return m.roomMap[roomId], true
 }
 
 // GetRoomByID - returns room by id
 // Returns (pointer, true) to the room with given id
 // Returns (nil, false) if the room with given id is not found
-func (m *Map) GetRoomByID(id int) (*Room, bool) {
-	for _, room := range m.rooms {
-		if room.id == id {
+func (m *Map) GetRoomByID(id RoomId) (*Room, bool) {
+	for _, room := range m.Rooms {
+		if room.Id == id {
 			return room, true
 		}
 	}
@@ -1859,7 +1944,7 @@ func (m *Map) GetRoomByID(id int) (*Room, bool) {
 
 // GetID - returns room ID
 func (r *Room) GetID() int {
-	return r.id
+	return int(r.Id)
 }
 
 // GetCapacity - returns room's number of empty points for items
@@ -1869,35 +1954,35 @@ func (r *Room) GetCapacity() int {
 
 // GetPos - returns room position (left-upper corner)
 func (r *Room) GetPos() geometry.Point {
-	return r.pos
+	return r.Pos
 }
 
 // GetHW - returns room height and width
 func (r *Room) GetHW() (int, int) {
-	return r.height, r.width
+	return r.Rows, r.Cols
 }
 
 // GetCenter - returns room center point
 func (r *Room) GetCenter() geometry.Point {
-	return r.center
+	return r.Center
 }
 
 // GetEmptyItemPoints - returns the copy of slice of empty points for items in the room
 func (r *Room) GetEmptyItemPoints() []geometry.Point {
-	return slices.Clone(r.emptyItemPoints)
+	return slices.Clone(r.EmptyItemPoints)
 }
 
 // GetEmptyActorPoints - returns the copy of slice of empty points for actors in the room
 func (r *Room) GetEmptyActorPoints() []geometry.Point {
-	return slices.Clone(r.emptyActorPoints)
+	return slices.Clone(r.EmptyActorPoints)
 }
 
 // GetOpenDoorsCount - returns number of open doors in the room
 func (r *Room) GetOpenDoorsCount() int {
 	openDoors := 0
 
-	for _, d := range r.doors {
-		if !d.locked {
+	for _, d := range r.Doors {
+		if !d.Locked {
 			openDoors++
 		}
 	}
