@@ -10,9 +10,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/unclestep/Rogue/internal/pkg/algorithm"
-	"github.com/unclestep/Rogue/internal/pkg/geometry"
-	"github.com/unclestep/Rogue/internal/pkg/idgen"
+	"github.com/unclestep/Rogue/pkg/algorithm"
+	"github.com/unclestep/Rogue/pkg/geometry"
+	"github.com/unclestep/Rogue/pkg/idgen"
 )
 
 // Map - structure for gameboard

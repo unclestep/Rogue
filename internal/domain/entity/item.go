@@ -2,7 +2,7 @@
 package entity
 
 import (
-	"github.com/unclestep/Rogue/internal/pkg/geometry"
+	"github.com/unclestep/Rogue/pkg/geometry"
 	"math/rand"
 )
 

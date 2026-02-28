@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/unclestep/Rogue/internal/domain/entity"
-	"github.com/unclestep/Rogue/internal/pkg/geometry"
+	"github.com/unclestep/Rogue/pkg/geometry"
 )
 
 func GenSeed() int64 {
@@ -33,10 +33,12 @@ func TestCollectActiveEffects(t *testing.T) {
 		foundFatigue, foundSleep := false, false
 
 		for _, effect := range effects {
-			if effect.Kind == entity.FatigueEffect {
+			switch effect.Kind {
+			case entity.FatigueEffect:
 				foundFatigue = true
-			} else if effect.Kind == entity.SleepEffect {
+			case entity.SleepEffect:
 				foundSleep = true
+			default:
 			}
 		}
 

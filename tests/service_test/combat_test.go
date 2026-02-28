@@ -7,22 +7,21 @@ import (
 
 	"github.com/unclestep/Rogue/internal/domain/entity"
 	"github.com/unclestep/Rogue/internal/domain/service"
-	"github.com/unclestep/Rogue/internal/pkg/geometry"
+	"github.com/unclestep/Rogue/pkg/geometry"
 )
 
 func setupTestEnv() (*entity.GameSession, *service.Combat, *entity.Actor, *entity.Actor) {
 	session := entity.NewGameSession()
-	session.Actors = make(map[entity.ActorId]*entity.Actor)
+	session.Monsters = make(map[entity.ActorId]*entity.Actor)
 	session.Items = make(map[entity.ItemId]*entity.Item)
 
-	cs := service.NewCombatService(session)
+	cs := service.NewCombatService(session, time.Now().UnixNano())
 
 	attacker := entity.NewDefaultPlayer(1, geometry.Point{X: 0, Y: 0})
 	defender := entity.NewDefaultZombie(2, geometry.Point{X: 1, Y: 0})
 
-	session.Actors[attacker.Id] = attacker
-	session.Actors[defender.Id] = defender
-	session.Player = attacker
+	session.Monsters[attacker.Id] = attacker
+	session.Monsters[defender.Id] = defender
 
 	return session, cs, attacker, defender
 }
@@ -177,7 +176,7 @@ func TestPerformDeathAndLoot(t *testing.T) {
 			t.Errorf("Expected defender HP: <=0, got: %v\n", defender.Vitals[entity.HP])
 		}
 
-		if _, exists := session.Actors[defender.Id]; exists {
+		if _, exists := session.Monsters[defender.Id]; exists {
 			t.Error("Dead actor should be removed from session")
 		}
 

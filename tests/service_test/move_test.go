@@ -3,10 +3,11 @@ package service_test
 import (
 	"math/rand"
 	"testing"
+	"time"
 
 	"github.com/unclestep/Rogue/internal/domain/entity"
 	"github.com/unclestep/Rogue/internal/domain/service"
-	"github.com/unclestep/Rogue/internal/pkg/geometry"
+	"github.com/unclestep/Rogue/pkg/geometry"
 )
 
 func createMoveEnv() (*entity.GameSession, *service.Move, *entity.Actor) {
@@ -18,10 +19,10 @@ func createMoveEnv() (*entity.GameSession, *service.Move, *entity.Actor) {
 
 	center := session.Map.Rooms[0].Center
 	mover := entity.NewDefaultPlayer(1, center)
-	session.Actors[mover.Id] = mover
+	session.Monsters[mover.Id] = mover
 	session.Map.SetActor(center, 1)
 
-	moveService := service.NewMove(session)
+	moveService := service.NewMoveService(session, time.Now().UnixNano())
 	moveService.SetSeed(seed)
 
 	return session, moveService, mover
@@ -98,13 +99,19 @@ func TestMovePatterns(t *testing.T) {
 
 func TestExecuteMove(t *testing.T) {
 	session, moveService, mover := createMoveEnv()
+
 	m := session.Map
 
 	target := mover.Pos.Add(geometry.Point{X: 1, Y: 0})
 	scentMap := m.GenerateScentMap([]geometry.Point{target})
 
 	t.Run("Mechanics: Stamina Cost and PosChange", func(t *testing.T) {
-		event := moveService.ExecuteMove(mover, scentMap, m)
+		events := moveService.ExecuteMove(mover, scentMap, m)
+
+		event, ok := events[0].(*service.MoveEvent)
+		if !ok {
+			t.Fatalf("Expected first event to be *MoveEvent, got %T\n", events[0])
+		}
 
 		if event.Outcome != service.MoveOutcomeSuccess {
 			t.Errorf("Expected Success, got %v", event.Outcome)
@@ -124,7 +131,12 @@ func TestExecuteMove(t *testing.T) {
 	t.Run("Mechanics: Not Enough Stamina", func(t *testing.T) {
 		mover.Vitals[entity.Stamina] = 0
 
-		event := moveService.ExecuteMove(mover, scentMap, m)
+		events := moveService.ExecuteMove(mover, scentMap, m)
+
+		event, ok := events[0].(*service.MoveEvent)
+		if !ok {
+			t.Fatalf("Expected first event to be *MoveEvent, got %T\n", events[0])
+		}
 
 		if event.Outcome != service.MoveOutcomeNoStamina {
 			t.Errorf("Expected MoveOutcomeNoStamina, got %v", event.Outcome)
@@ -135,7 +147,12 @@ func TestExecuteMove(t *testing.T) {
 		mover.Vitals[entity.Stamina] = 200
 		mover.Statuses[entity.StatusSleep] = 1
 
-		event := moveService.ExecuteMove(mover, scentMap, m)
+		events := moveService.ExecuteMove(mover, scentMap, m)
+
+		event, ok := events[0].(*service.MoveEvent)
+		if !ok {
+			t.Fatalf("Expected first event to be *MoveEvent, got %T\n", events[0])
+		}
 
 		if event.Outcome != service.MoveOutcomeCantMove {
 			t.Errorf("Expected MoveOutcomeCantMove (Sleep), got %v", event.Outcome)
@@ -160,7 +177,12 @@ func TestExecuteMove(t *testing.T) {
 		}
 		mover.Traits[entity.TriggerOnMove] = []*entity.Reaction{healOnMove}
 
-		event := moveService.ExecuteMove(mover, scentMap, m)
+		events := moveService.ExecuteMove(mover, scentMap, m)
+
+		event, ok := events[0].(*service.MoveEvent)
+		if !ok {
+			t.Fatalf("Expected first event to be *MoveEvent, got %T\n", events[0])
+		}
 
 		if event.Outcome != service.MoveOutcomeSuccess {
 			t.Errorf("Expected Success")

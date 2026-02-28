@@ -2,7 +2,7 @@
 package entity
 
 import (
-	"github.com/unclestep/Rogue/internal/pkg/algorithm"
+	"github.com/unclestep/Rogue/pkg/algorithm"
 )
 
 type Backpack struct {

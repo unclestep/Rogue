@@ -3,10 +3,9 @@ package service
 import (
 	"log"
 	"math/rand"
-	"time"
 
 	"github.com/unclestep/Rogue/internal/domain/entity"
-	"github.com/unclestep/Rogue/internal/pkg/geometry"
+	"github.com/unclestep/Rogue/pkg/geometry"
 )
 
 //
@@ -16,24 +15,25 @@ import (
 //
 
 type Move struct {
-	session      *entity.GameSession
-	moveRegistry *MoveRegistry
-	seed         int64
-	rng          *rand.Rand
+	session  *entity.GameSession
+	moves    *MoveRegistry
+	resolver *Resolver
+	seed     int64
+	rng      *rand.Rand
 }
 
 //
 // -- CONSTRUCTOR --
 //
 
-func NewMove(session *entity.GameSession) *Move {
+func NewMoveService(session *entity.GameSession, seed int64) *Move {
 	m := &Move{
-		session:      session,
-		moveRegistry: NewMoveRegistry(),
-		seed:         time.Now().UnixNano(),
+		session:  session,
+		moves:    NewMoveRegistry(),
+		resolver: NewResolverService(session, seed),
+		seed:     seed,
+		rng:      rand.New(rand.NewSource(seed)),
 	}
-
-	m.rng = rand.New(rand.NewSource(m.seed))
 	m.RegisterAll()
 
 	return m
@@ -53,7 +53,8 @@ func (m *Move) SetSeed(seed int64) {
 //
 
 type WalkableGrid interface {
-	CanMoveTo(p geometry.Point) bool
+	IsWalkable(p geometry.Point) bool
+	GetActorID(p geometry.Point) (int, bool)
 }
 
 //
@@ -71,9 +72,9 @@ func NewMoveRegistry() *MoveRegistry {
 }
 
 func (m *Move) RegisterAll() {
-	m.moveRegistry.movements[entity.DefaultMovePattern] = m.DefaultMove
-	m.moveRegistry.movements[entity.TeleportMovePattern] = m.TeleportMove
-	m.moveRegistry.movements[entity.DiagonalMovePattern] = m.DiagonalMove
+	m.moves.movements[entity.DefaultMovePattern] = m.DefaultMove
+	m.moves.movements[entity.TeleportMovePattern] = m.TeleportMove
+	m.moves.movements[entity.DiagonalMovePattern] = m.DiagonalMove
 }
 
 func (mr *MoveRegistry) Register(movement entity.MovePatternType, moveFunc func(*entity.Actor, [][]int, WalkableGrid) geometry.Point) {
@@ -103,6 +104,7 @@ const (
 	MoveOutcomeSuccess MoveOutcome = iota
 	MoveOutcomeNoStamina
 	MoveOutcomeCantMove
+	MoveOutcomeNoSpace
 )
 
 func NewMoveEvent(actor *entity.Actor) *MoveEvent {
@@ -116,10 +118,6 @@ func (event *MoveEvent) WasPerformed() bool {
 }
 
 func (event *MoveEvent) Perform(gs *entity.GameSession, rng *rand.Rand) {
-	if !event.WasPerformed() {
-		return
-	}
-
 	mover := event.Mover.Actor
 	oldPos := mover.Pos
 
@@ -133,31 +131,14 @@ func (event *MoveEvent) Perform(gs *entity.GameSession, rng *rand.Rand) {
 // -- MAIN MOVE FUNCTION --
 //
 
-func (m *Move) ExecuteMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) *MoveEvent {
+func (m *Move) ExecuteMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) []Event {
 	event := NewMoveEvent(mover)
 
-	if !mover.CanMove() {
-		event.Outcome = MoveOutcomeCantMove
-		return event
-	}
-
-	if !mover.HasStaminaForMove() {
-		event.Outcome = MoveOutcomeNoStamina
-		return event
-	}
-
-	moveFunc := m.moveRegistry.GetMoveFunc(mover.MovePattern)
+	moveFunc := m.moves.GetMoveFunc(mover.MovePattern)
 	nextPos := moveFunc(mover, scentMap, grid)
-
-	event.Mover.VitalsChange[entity.Stamina] -= mover.DerivedAttrs[entity.MoveStaminaCost]
 	event.Mover.PosChange = nextPos.Sub(mover.Pos)
 
-	if !event.Mover.PosChange.Equal(geometry.Point{X: 0, Y: 0}) {
-		entity.ResolveReactions(entity.TriggerOnMove, event.Mover, event.Mover, m.rng)
-		event.Mover.DecrementAllRelatedCharges(entity.TriggerOnMove)
-	}
-
-	return event
+	return m.resolver.ResolveMove(event)
 }
 
 //
@@ -166,7 +147,7 @@ func (m *Move) ExecuteMove(mover *entity.Actor, scentMap [][]int, grid WalkableG
 
 func (m *Move) DefaultMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) geometry.Point {
 	ind := 0
-	availablePoints := m.FindAllMinCardinals(mover.Pos, 1, scentMap, grid)
+	availablePoints := m.FindAllMinCardinals(mover, 1, scentMap, grid)
 
 	if len(availablePoints) == 0 {
 		return mover.Pos
@@ -177,7 +158,8 @@ func (m *Move) DefaultMove(mover *entity.Actor, scentMap [][]int, grid WalkableG
 	return availablePoints[ind]
 }
 
-func (m *Move) FindAllMinCardinals(center geometry.Point, searchLen int, scentMap [][]int, grid WalkableGrid) []geometry.Point {
+func (m *Move) FindAllMinCardinals(mover *entity.Actor, searchLen int, scentMap [][]int, grid WalkableGrid) []geometry.Point {
+	center := mover.Pos
 	mins := make([]geometry.Point, 0)
 	minScent := scentMap[center.Y][center.X]
 
@@ -186,7 +168,15 @@ func (m *Move) FindAllMinCardinals(center geometry.Point, searchLen int, scentMa
 
 	for y := yMin; y <= yMax; y++ {
 		p := geometry.Point{Y: y, X: center.X}
-		if !grid.CanMoveTo(p) {
+		if p == center {
+			continue
+		}
+
+		if !grid.IsWalkable(p) {
+			continue
+		}
+
+		if actorId, _ := grid.GetActorID(p); m.session.IsMonsterExists(entity.ActorId(actorId)) && mover.Kind != entity.PlayerType {
 			continue
 		}
 
@@ -203,7 +193,15 @@ func (m *Move) FindAllMinCardinals(center geometry.Point, searchLen int, scentMa
 
 	for x := xMin; x <= xMax; x++ {
 		p := geometry.Point{Y: center.Y, X: x}
-		if !grid.CanMoveTo(p) {
+		if p == center {
+			continue
+		}
+
+		if !grid.IsWalkable(p) {
+			continue
+		}
+
+		if actorId, _ := grid.GetActorID(p); m.session.IsMonsterExists(entity.ActorId(actorId)) && mover.Kind != entity.PlayerType {
 			continue
 		}
 
@@ -224,7 +222,7 @@ func (m *Move) FindAllMinCardinals(center geometry.Point, searchLen int, scentMa
 func (m *Move) TeleportMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) geometry.Point {
 	ind := 0
 	rad := mover.DerivedAttrs[entity.Hostility]
-	availablePoints := m.FindAllMinMoore(mover.Pos, rad, scentMap, grid)
+	availablePoints := m.FindAllMinMoore(mover, rad, scentMap, grid)
 
 	if len(availablePoints) == 0 {
 		return mover.Pos
@@ -235,7 +233,8 @@ func (m *Move) TeleportMove(mover *entity.Actor, scentMap [][]int, grid Walkable
 	return availablePoints[ind]
 }
 
-func (m *Move) FindAllMinMoore(center geometry.Point, rad int, scentMap [][]int, grid WalkableGrid) []geometry.Point {
+func (m *Move) FindAllMinMoore(mover *entity.Actor, rad int, scentMap [][]int, grid WalkableGrid) []geometry.Point {
+	center := mover.Pos
 	mins := make([]geometry.Point, 0)
 	minScent := scentMap[center.Y][center.X]
 
@@ -245,7 +244,15 @@ func (m *Move) FindAllMinMoore(center geometry.Point, rad int, scentMap [][]int,
 	for y := yMin; y <= yMax; y++ {
 		for x := xMin; x <= xMax; x++ {
 			p := geometry.Point{Y: y, X: x}
-			if !grid.CanMoveTo(p) {
+			if p == center {
+				continue
+			}
+
+			if !grid.IsWalkable(p) {
+				continue
+			}
+
+			if actorId, _ := grid.GetActorID(p); m.session.IsMonsterExists(entity.ActorId(actorId)) && mover.Kind != entity.PlayerType {
 				continue
 			}
 
@@ -266,7 +273,7 @@ func (m *Move) FindAllMinMoore(center geometry.Point, rad int, scentMap [][]int,
 
 func (m *Move) DiagonalMove(mover *entity.Actor, scentMap [][]int, grid WalkableGrid) geometry.Point {
 	ind := 0
-	availablePoints := m.FindAllMinDiagonal(mover.Pos, 1, scentMap, grid)
+	availablePoints := m.FindAllMinDiagonal(mover, 1, scentMap, grid)
 
 	if len(availablePoints) == 0 {
 		return mover.Pos
@@ -277,7 +284,8 @@ func (m *Move) DiagonalMove(mover *entity.Actor, scentMap [][]int, grid Walkable
 	return availablePoints[ind]
 }
 
-func (m *Move) FindAllMinDiagonal(center geometry.Point, searchLen int, scentMap [][]int, grid WalkableGrid) []geometry.Point {
+func (m *Move) FindAllMinDiagonal(mover *entity.Actor, searchLen int, scentMap [][]int, grid WalkableGrid) []geometry.Point {
+	center := mover.Pos
 	mins := make([]geometry.Point, 0)
 	minScent := scentMap[center.Y][center.X]
 	i := 0
@@ -293,13 +301,18 @@ func (m *Move) FindAllMinDiagonal(center geometry.Point, searchLen int, scentMap
 		upper := geometry.Point{Y: yMin + i, X: x}
 		bottom := geometry.Point{Y: yMax - i, X: x}
 
-		upperAndBottom = append(upperAndBottom, bottom)
-		if upper != bottom {
-			upperAndBottom = append(upperAndBottom, upper)
-		}
+		upperAndBottom = append(upperAndBottom, bottom, upper)
 
 		for _, p := range upperAndBottom {
-			if !grid.CanMoveTo(p) {
+			if p == center {
+				continue
+			}
+
+			if !grid.IsWalkable(p) {
+				continue
+			}
+
+			if actorId, _ := grid.GetActorID(p); m.session.IsMonsterExists(entity.ActorId(actorId)) && mover.Kind != entity.PlayerType {
 				continue
 			}
 

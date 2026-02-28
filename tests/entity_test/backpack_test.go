@@ -76,7 +76,7 @@ func TestAddItem(t *testing.T) {
 	})
 
 	t.Run("Add regular item when slot is full", func(t *testing.T) {
-		for i := 0; i < entity.MaxBackpackTypeCapacity; i++ {
+		for i := range entity.MaxBackpackTypeCapacity {
 			b.Add(&entity.Item{Id: entity.ItemId(10 + i), Kind: entity.ItemTypeFood})
 		}
 

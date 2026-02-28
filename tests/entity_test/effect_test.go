@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/unclestep/Rogue/internal/domain/entity"
-	"github.com/unclestep/Rogue/internal/pkg/geometry"
+	"github.com/unclestep/Rogue/pkg/geometry"
 )
 
 func TestEffectClone(t *testing.T) {

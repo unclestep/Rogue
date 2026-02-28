@@ -3,39 +3,97 @@ package service
 import (
 	"log"
 	"math/rand"
-	"time"
 
 	"github.com/unclestep/Rogue/internal/domain/entity"
-	"github.com/unclestep/Rogue/internal/pkg/geometry"
+	"github.com/unclestep/Rogue/pkg/geometry"
 )
 
 type Resolver struct {
-	session *entity.GameSession
-	combat  *Combat
-	move    *Move
-	seed    int64
-	rng     *rand.Rand
+	Session *entity.GameSession
+	Combat  *Combat
+	Seed    int64
+	Rng     *rand.Rand
 }
 
-func (resolver *Resolver) SetSeed(seed int64) {
-	resolver.seed = seed
-	resolver.rng = rand.New(rand.NewSource(seed))
-	resolver.combat.SetSeed(resolver.seed)
-	resolver.move.SetSeed(resolver.combat.seed)
-}
-
-func NewResolver(session *entity.GameSession, combat *Combat, movement *Move) *Resolver {
-	resolver := &Resolver{
-		session: session,
-		combat:  combat,
-		move:    movement,
-		seed:    time.Now().UnixNano(),
+func NewResolverService(session *entity.GameSession, seed int64) *Resolver {
+	return &Resolver{
+		Session: session,
+		Combat:  NewCombatService(session, seed),
+		Seed:    seed,
+		Rng:     rand.New(rand.NewSource(seed)),
 	}
-	resolver.rng = rand.New(rand.NewSource(resolver.seed))
-	combat.SetSeed(resolver.seed)
-	movement.SetSeed(resolver.combat.seed)
+}
 
-	return resolver
+func (r *Resolver) SetSeed(seed int64) {
+	r.Seed = seed
+	r.Rng = rand.New(rand.NewSource(seed))
+}
+
+func (r *Resolver) ResolveMove(event *MoveEvent) []Event {
+	// Check if the actor moved
+	curPos := event.Mover.Actor.Pos
+	newPos := curPos.Add(event.Mover.PosChange)
+	if newPos.Equal(curPos) { // Actor has no space to move
+		// Reset stamina to escape infinite loops
+		// No need to check if it is a player, because players can move to monsters
+		event.Mover.ResetStamina()
+		event.Outcome = MoveOutcomeNoSpace
+		return []Event{event}
+	}
+
+	actor := event.Mover.Actor
+	gameMap := r.Session.Map
+	actorMap := r.Session.Monsters
+
+	// If actor's new position is other actor's position, it is an attack
+	if actorId, inBounds := gameMap.GetActorID(newPos); inBounds && actorId > 0 {
+		target, alive := actorMap[entity.ActorId(actorId)]
+
+		// Handle desync between gameMap and actorMap
+		if !alive {
+			gameMap.RemoveActor(newPos)
+			log.Print("[INFO] Game map and actor map were desync and problem was fixed, however they should be always synchronized so double-check the code")
+		} else if actor.Kind != entity.PlayerType && target.Kind != entity.PlayerType {
+			// Monsters can't attack each other
+			event.Mover.PosChange = geometry.NewDefaultPoint()
+			// Reset stamina to escape infinite loops
+			event.Mover.ResetStamina()
+			event.Outcome = MoveOutcomeNoSpace
+			return []Event{event}
+		} else {
+			attackEvent := r.Combat.ExecuteAttack(actor, target)
+			// Forget about move event
+			return []Event{attackEvent}
+		}
+	}
+
+	// So, that is just a move after all
+	// But need to check if we can move
+	// or have enough stamina for move
+	if !actor.CanMove() {
+		if actor.Kind != entity.PlayerType {
+			event.Mover.ResetStamina()
+		}
+		event.Outcome = MoveOutcomeCantMove
+		return []Event{event}
+	}
+	if !actor.HasStaminaForMove() {
+		event.Outcome = MoveOutcomeNoStamina
+		return []Event{event}
+	}
+
+	event.Mover.VitalsChange[entity.Stamina] -= actor.DerivedAttrs[entity.MoveStaminaCost]
+	entity.ResolveReactions(entity.TriggerOnMove, event.Mover, event.Mover, r.Rng)
+	event.Mover.DecrementAllRelatedCharges(entity.TriggerOnMove)
+
+	events := []Event{event}
+
+	// If there is an item in new position
+	if itemId, inBounds := gameMap.GetItemID(newPos); inBounds && itemId > 0 && actor.Kind == entity.PlayerType {
+		events = append(events, r.ResolveItemPickup(actor, entity.ItemId(itemId)))
+	}
+
+	return events
 }
 
 type ItemPickupEvent struct {
@@ -47,6 +105,28 @@ func NewItemPickupEvent(actor *entity.Actor) *ItemPickupEvent {
 	return &ItemPickupEvent{
 		Actor: actor,
 	}
+}
+
+func (r *Resolver) ResolveItemPickup(actor *entity.Actor, itemId entity.ItemId) *ItemPickupEvent {
+	event := NewItemPickupEvent(actor)
+
+	itemMap := r.Session.Items
+	gameMap := r.Session.Map
+	item, exists := itemMap[itemId]
+
+	// Handle desync between gameMap and actorMap
+	if !exists {
+		gameMap.RemoveItem(item.Pos)
+		log.Print("[INFO] Game map and item map were desync and problem was fixed, however they should be always synchronized so double-check the code")
+		return event
+	}
+
+	if !actor.Backpack.CanAddItem(item.Kind) {
+		return event
+	}
+
+	event.Item = item
+	return event
 }
 
 func (event *ItemPickupEvent) Perform(gs *entity.GameSession, rng *rand.Rand) {
@@ -68,77 +148,4 @@ func (event *ItemPickupEvent) Perform(gs *entity.GameSession, rng *rand.Rand) {
 	if item.Kind == entity.ItemTypeTreasure {
 		delete(itemMap, item.Id)
 	}
-}
-
-func (resolver *Resolver) ResolveMove(moveEvent *MoveEvent) []Event {
-	events := make([]Event, 2, 2)
-
-	if !moveEvent.WasPerformed() {
-		events[0] = moveEvent
-		return events
-	}
-
-	// Check if the actor moved
-	curPos := moveEvent.Mover.Actor.Pos
-	newPos := curPos.Add(moveEvent.Mover.PosChange)
-	if newPos.Equal(curPos) { // Actor has no space to move
-		events[0] = moveEvent
-		return events
-	}
-
-	actor := moveEvent.Mover.Actor
-	gameMap := resolver.session.Map
-	actorMap := resolver.session.Actors
-
-	// If actor's new position is other actor's position, it is an attack
-	if actorId, inBounds := gameMap.GetActorID(newPos); inBounds && actorId > 0 {
-		target, alive := actorMap[entity.ActorId(actorId)]
-
-		// Handle desync between gameMap and actorMap
-		if !alive {
-			gameMap.RemoveActor(newPos)
-			log.Print("[INFO] Game map and actor map were desync and problem was fixed, however they should be always synchronized so double-check the code")
-		} else if actor.Kind != entity.PlayerType && target.Kind != entity.PlayerType {
-			// Monsters can't attack each other
-			moveEvent.Mover.PosChange = geometry.NewDefaultPoint()
-			events[0] = moveEvent
-			return events
-		} else {
-			attackEvent := resolver.combat.ExecuteAttack(actor, target)
-			// Forget about move event
-			events[0] = attackEvent
-			return events
-		}
-	}
-
-	events[0] = moveEvent
-
-	// If there is an item in new position
-	if itemId, inBounds := gameMap.GetItemID(newPos); inBounds && itemId > 0 {
-		events[1] = resolver.ResolveItemPickup(actor, entity.ItemId(itemId))
-	}
-
-	return events
-}
-
-func (resolver *Resolver) ResolveItemPickup(actor *entity.Actor, itemId entity.ItemId) *ItemPickupEvent {
-	event := NewItemPickupEvent(actor)
-
-	itemMap := resolver.session.Items
-	gameMap := resolver.session.Map
-	item, exists := itemMap[itemId]
-
-	// Handle desync between gameMap and actorMap
-	if !exists {
-		gameMap.RemoveItem(item.Pos)
-		log.Print("[INFO] Game map and item map were desync and problem was fixed, however they should be always synchronized so double-check the code")
-		return event
-	}
-
-	if !actor.Backpack.CanAddItem(item.Kind) {
-		return event
-	}
-
-	event.Item = item
-	return event
 }

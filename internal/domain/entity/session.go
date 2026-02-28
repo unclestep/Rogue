@@ -3,7 +3,7 @@ package entity
 import (
 	"math/rand"
 
-	"github.com/unclestep/Rogue/internal/pkg/geometry"
+	"github.com/unclestep/Rogue/pkg/geometry"
 )
 
 const (
@@ -11,19 +11,36 @@ const (
 )
 
 type GameSession struct {
-	Player *Actor
-	Map    *Map
-	Actors map[ActorId]*Actor
-	Items  map[ItemId]*Item
+	Map      *Map
+	Players  map[ActorId]*Actor
+	Monsters map[ActorId]*Actor
+	Items    map[ItemId]*Item
 }
 
 func NewGameSession() *GameSession {
 	gs := &GameSession{
-		Map:    NewDefaultMap(),
-		Actors: make(map[ActorId]*Actor),
-		Items:  make(map[ItemId]*Item),
+		Map:      NewDefaultMap(),
+		Players:  make(map[ActorId]*Actor),
+		Monsters: make(map[ActorId]*Actor),
+		Items:    make(map[ItemId]*Item),
 	}
 	return gs
+}
+
+//
+//
+// --- PREDICATES ---
+//
+//
+
+func (gs *GameSession) IsPlayerExists(playerId ActorId) bool {
+	_, exists := gs.Players[playerId]
+	return exists
+}
+
+func (gs *GameSession) IsMonsterExists(monsterId ActorId) bool {
+	_, exists := gs.Monsters[monsterId]
+	return exists
 }
 
 func (gs *GameSession) IsLucky(chance int, rng *rand.Rand) bool {
@@ -32,14 +49,14 @@ func (gs *GameSession) IsLucky(chance int, rng *rand.Rand) bool {
 
 func (gs *GameSession) AddActor(actor *Actor) {
 	gs.Map.SetActor(actor.Pos, int(actor.Id))
-	gs.Actors[actor.Id] = actor
+	gs.Monsters[actor.Id] = actor
 }
 
 func (gs *GameSession) RemoveActor(id ActorId) {
-	actor, exists := gs.Actors[id]
+	actor, exists := gs.Monsters[id]
 	if exists {
 		gs.Map.RemoveActor(actor.Pos)
-		delete(gs.Actors, id)
+		delete(gs.Monsters, id)
 	}
 }
 

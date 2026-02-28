@@ -2,7 +2,6 @@ package service
 
 import (
 	"math/rand"
-	"time"
 
 	"github.com/unclestep/Rogue/internal/domain/entity"
 )
@@ -13,10 +12,12 @@ type Combat struct {
 	rng     *rand.Rand
 }
 
-func NewCombatService(session *entity.GameSession) *Combat {
-	c := &Combat{session: session, seed: time.Now().UnixNano()}
-	c.rng = rand.New(rand.NewSource(c.seed))
-	return c
+func NewCombatService(session *entity.GameSession, seed int64) *Combat {
+	return &Combat{
+		session: session,
+		seed:    seed,
+		rng:     rand.New(rand.NewSource(seed)),
+	}
 }
 
 func (c *Combat) SetSeed(seed int64) {
@@ -54,6 +55,9 @@ func (c *Combat) ExecuteAttack(attacker, defender *entity.Actor) *AttackEvent {
 	event.Defender = entity.NewActorImpact(defender)
 
 	if !attacker.CanAttack() {
+		if attacker.Kind != entity.PlayerType {
+			event.Attacker.ResetStamina()
+		}
 		event.Outcome = AttackOutcomeStatusCantAttack
 		return event
 	}
@@ -130,7 +134,7 @@ func (event *AttackEvent) Perform(gs *entity.GameSession, rng *rand.Rand) {
 	if attacker.Vitals[entity.HP] <= 0 {
 		gs.RemoveActor(attacker.Id)
 		// Check player's health in main loop (not here)
-		if attacker != gs.Player {
+		if !gs.IsPlayerExists(attacker.Id) {
 			gs.SpawnTreasures(attacker.Pos, calcTreasuresValue(attacker, rng))
 
 		}
@@ -139,7 +143,7 @@ func (event *AttackEvent) Perform(gs *entity.GameSession, rng *rand.Rand) {
 	if defender.Vitals[entity.HP] <= 0 {
 		gs.RemoveActor(defender.Id)
 		// Check player's health in main loop (not here)
-		if defender != gs.Player {
+		if !gs.IsPlayerExists(defender.Id) {
 			gs.SpawnTreasures(defender.Pos, calcTreasuresValue(defender, rng))
 		}
 	}

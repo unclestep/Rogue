@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/unclestep/Rogue/internal/domain/entity"
-	"github.com/unclestep/Rogue/internal/pkg/geometry"
+	"github.com/unclestep/Rogue/pkg/geometry"
 )
 
 var seed = time.Now().UnixNano() //nolint:gofumpt
@@ -158,8 +158,8 @@ func testGenerateObjects(t *testing.T,
 			t.Errorf("Seed %v: expected nil, got %v", seed, m.GetExitRoom())
 		}
 
-		for i := 0; i < 24; i++ {
-			for j := 0; j < 80; j++ {
+		for i := range 24 {
+			for j := range 80 {
 				p := geometry.Point{X: j, Y: i}
 
 				cellTileGrid, tok := m.GetTileType(p)
@@ -494,8 +494,8 @@ func TestUpdateVisibleAreas(t *testing.T) {
 			}
 
 			actualVisible := 0
-			for y := 0; y < height; y++ {
-				for x := 0; x < width; x++ {
+			for y := range height {
+				for x := range width {
 					if v, _ := m.GetTileVisibility(geometry.Point{X: x, Y: y}); v == entity.Visible {
 						actualVisible++
 					}
@@ -564,7 +564,7 @@ func TestGenerateLevel(t *testing.T) {
 func TestLootSystem(t *testing.T) {
 	m := entity.NewDefaultMap()
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		m.ClearLevel()
 		m.GenerateTopology(3, 3, rng)
 
@@ -819,7 +819,7 @@ func TestMapEntities(t *testing.T) {
 func TestMutatorsAndRandomPickers(t *testing.T) {
 	m := entity.NewDefaultMap()
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		m.ClearLevel()
 		m.GenerateTopology(3, 3, rng)
 		var room *entity.Room

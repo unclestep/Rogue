@@ -2,6 +2,7 @@ package geometry
 
 import (
 	"fmt"
+	"math"
 )
 
 type Point struct {
@@ -90,6 +91,10 @@ func (p Point) Sub(sub Point) Point {
 
 func (p Point) Equal(other Point) bool {
 	return p.X == other.X && p.Y == other.Y
+}
+
+func (p Point) EuclideanDistance(to Point) float64 {
+	return math.Sqrt(math.Pow(float64(to.X-p.X), 2) + math.Pow(float64(to.Y-p.Y), 2))
 }
 
 func (p *Point) String() string {

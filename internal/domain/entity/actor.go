@@ -3,7 +3,7 @@ package entity
 import (
 	"math/rand"
 
-	"github.com/unclestep/Rogue/internal/pkg/geometry"
+	"github.com/unclestep/Rogue/pkg/geometry"
 )
 
 type Actor struct {
@@ -19,6 +19,7 @@ type Actor struct {
 	EquippedGear map[ItemType]*Item
 	Backpack     *Backpack
 	Traits       map[TriggerType][]*Reaction // What actor does in different situations
+	CurState     ActorStateType
 }
 
 type ActorId int
@@ -105,6 +106,14 @@ type AttrConf struct {
 	Hostility           int
 	CounterAttackChance int
 }
+
+type ActorStateType int
+
+const (
+	AIStateIdle ActorStateType = iota
+	AIStateWander
+	AIStateChase
+)
 
 // Health consts
 const (
@@ -324,6 +333,14 @@ func (impact *ActorImpact) GetStatus(statusType StatusType) (int, *Effect) {
 	}
 
 	return 0, nil
+}
+
+//
+// -- SETTERS --
+//
+
+func (impact *ActorImpact) ResetStamina() {
+	impact.VitalsChange[Stamina] -= impact.Actor.Vitals[Stamina]
 }
 
 //

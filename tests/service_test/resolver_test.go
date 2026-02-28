@@ -3,10 +3,11 @@ package service_test
 import (
 	"math/rand"
 	"testing"
+	"time"
 
 	"github.com/unclestep/Rogue/internal/domain/entity"
 	"github.com/unclestep/Rogue/internal/domain/service"
-	"github.com/unclestep/Rogue/internal/pkg/geometry"
+	"github.com/unclestep/Rogue/pkg/geometry"
 )
 
 func setupResolverEnv() (*entity.GameSession, *service.Resolver, *entity.Actor) {
@@ -18,16 +19,12 @@ func setupResolverEnv() (*entity.GameSession, *service.Resolver, *entity.Actor) 
 	session.Map.GenerateTopology(1, 1, rng)
 	center := session.Map.Rooms[0].GetCenter()
 
-	combatService := service.NewCombatService(session)
-	moveService := service.NewMove(session)
-
-	resolver := service.NewResolver(session, combatService, moveService)
+	resolver := service.NewResolverService(session, time.Now().UnixNano())
 	resolver.SetSeed(seed)
 
 	mover := entity.NewDefaultPlayer(1, center)
-	session.Actors[mover.Id] = mover
+	session.Monsters[mover.Id] = mover
 	session.Map.SetActor(mover.Pos, int(mover.Id))
-	session.Player = mover
 
 	return session, resolver, mover
 }
@@ -44,7 +41,7 @@ func TestResolveMoveCombatLogic(t *testing.T) {
 
 		enemy := entity.NewDefaultZombie(2, targetPos)
 		enemy.DerivedAttrs[entity.Dexterity] = 0
-		session.Actors[enemy.Id] = enemy
+		session.Monsters[enemy.Id] = enemy
 		session.Map.SetActor(targetPos, int(enemy.Id))
 
 		startHP := enemy.Vitals[entity.HP]
@@ -76,8 +73,8 @@ func TestResolveMoveCombatLogic(t *testing.T) {
 
 		mon1 := entity.NewDefaultZombie(3, player.Pos)
 		mon2 := entity.NewDefaultZombie(4, targetPos)
-		session.Actors[mon1.Id] = mon1
-		session.Actors[mon2.Id] = mon2
+		session.Monsters[mon1.Id] = mon1
+		session.Monsters[mon2.Id] = mon2
 		session.Map.SetActor(mon1.Pos, int(mon1.Id))
 		session.Map.SetActor(mon2.Pos, int(mon2.Id))
 
@@ -161,6 +158,7 @@ func TestResolveMoveItemPickup(t *testing.T) {
 	})
 
 	t.Run("Pick up Treasure (Auto-consume)", func(t *testing.T) {
+		player.Vitals[entity.Stamina] = player.DerivedAttrs[entity.StaminaRegen]
 		targetPos2 := player.Pos.Add(geometry.Point{X: 1, Y: 0})
 
 		treasure := entity.NewTreasureItem(200, targetPos2, 500)
@@ -192,7 +190,7 @@ func TestResolveMoveItemPickup(t *testing.T) {
 	t.Run("Backpack Full", func(t *testing.T) {
 		targetPos3 := player.Pos.Add(geometry.Point{X: 0, Y: 1})
 
-		for i := 0; i < entity.MaxBackpackTypeCapacity; i++ {
+		for range entity.MaxBackpackTypeCapacity {
 			player.Backpack.Add(&entity.Item{Kind: entity.ItemTypeFood})
 		}
 
