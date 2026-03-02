@@ -146,6 +146,10 @@ func NewDefaultMap() *Map {
 //
 //
 
+func (m *Map) GetDimensions() geometry.Point {
+	return geometry.Point{X: m.Cols, Y: m.Rows}
+}
+
 // GetEntrancePoint - returns entrance point.
 func (m *Map) GetEntrancePoint() geometry.Point {
 	return m.EntrancePoint
@@ -330,8 +334,8 @@ func (m *Map) Move(src, dst geometry.Point) bool {
 		return false
 	}
 
-	m.ActorGrid[dst.Y][dst.X] = m.ActorGrid[src.Y][src.X]
-	m.ActorGrid[src.Y][src.X] = 0
+	m.SetActor(dst, m.ActorGrid[src.Y][src.X])
+	m.RemoveActor(src)
 
 	return true
 }

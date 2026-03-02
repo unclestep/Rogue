@@ -1,29 +1,37 @@
 package entity
 
 import (
+	"maps"
 	"math/rand"
 
 	"github.com/unclestep/Rogue/pkg/geometry"
 )
 
 type Actor struct {
-	Id           ActorId   // Unique identification of actor
-	Kind         ActorType // Actor type, e.g. Player, Vampire, Zombie
-	MovePattern  MovePatternType
-	Pos          geometry.Point
-	Vitals       map[VitalType]int      // Non-constant stats, e.g. current hp, stamina
-	BaseAttrs    map[AttrType]int       // Base actor's stats: strength, max health etc.
-	DerivedAttrs map[AttrType]int       // Computed actor's stats: base attributes + effects + weapon
-	Statuses     map[StatusType]int     // Computed actor's statuses: statuses are granted by effects
-	Effects      map[EffectType]*Effect // Actor effects: permanent (reversible via dispelling) or temporary (expiring by turn count or usage limit). Effects of the same type stack by extending the duration; however, they do not increase or decrease the modified stats further
-	EquippedGear map[ItemType]*Item
-	Backpack     *Backpack
-	Traits       map[TriggerType][]*Reaction // What actor does in different situations
-	CurState     ActorStateType
+	Id           ActorId                     `json:"id"`   // Unique identification of actor
+	Kind         ActorType                   `json:"kind"` // Actor type, e.g. Player, Vampire, Zombie
+	MovePattern  MovePatternType             `json:"move_pattern"`
+	Pos          geometry.Point              `json:"pos"`
+	Vitals       map[VitalType]int           `json:"vitals"`        // Non-constant stats, e.g. current hp, stamina
+	BaseAttrs    map[AttrType]int            `json:"base_attrs"`    // Base actor's stats: strength, max health etc.
+	DerivedAttrs map[AttrType]int            `json:"derived_attrs"` // Computed actor's stats: base attributes + effects + weapon
+	Statuses     map[StatusType]int          `json:"statuses"`      // Computed actor's statuses: statuses are granted by effects
+	Effects      map[EffectType]*Effect      `json:"effects"`       // Actor effects: permanent (reversible via dispelling) or temporary (expiring by turn count or usage limit). Effects of the same type stack by extending the duration; however, they do not increase or decrease the modified stats further
+	EquippedGear map[ItemType]*Item          `json:"equipped_gear"`
+	Backpack     *Backpack                   `json:"backpack"`
+	Traits       map[TriggerType][]*Reaction `json:"traits"` // What actor does in different situations
+	CurState     ActorStateType              `json:"cur_state"`
 }
 
 type ActorId int
 
+//
+//
+// --- ACTOR TYPES ---
+//
+//
+
+//go:generate stringer -type=ActorType
 type ActorType int
 
 const (
@@ -37,12 +45,26 @@ const (
 	MimicType
 )
 
+//
+//
+// --- ATTACK PATTERNS ---
+//
+//
+
+//go:generate stringer -type=AttackPatternType
 type AttackPatternType int
 
 const (
 	DefaultAttackPattern AttackPatternType = iota
 )
 
+//
+//
+// --- MOVE PATTERNS ---
+//
+//
+
+//go:generate stringer -type=MovePatternType
 type MovePatternType int
 
 const (
@@ -51,6 +73,13 @@ const (
 	DiagonalMovePattern
 )
 
+//
+//
+// --- VITALS ---
+//
+//
+
+//go:generate stringer -type=VitalType
 type VitalType int
 
 const (
@@ -66,6 +95,13 @@ func NewVitals(hp, stamina int) map[VitalType]int {
 	}
 }
 
+//
+//
+// --- ATTRIBUTES ---
+//
+//
+
+//go:generate stringer -type=AttrType
 type AttrType int
 
 const (
@@ -107,13 +143,9 @@ type AttrConf struct {
 	CounterAttackChance int
 }
 
-type ActorStateType int
-
-const (
-	AIStateIdle ActorStateType = iota
-	AIStateWander
-	AIStateChase
-)
+//
+// -- ATTRIBUTE CONSTS --
+//
 
 // Health consts
 const (
@@ -168,7 +200,93 @@ const (
 )
 
 //
-// -- PREDICATES --
+//
+// --- ACTOR STATES ---
+//
+//
+
+type ActorStateType int
+
+const (
+	AIStateIdle ActorStateType = iota
+	AIStateWander
+	AIStateChase
+)
+
+//
+//
+// --- CLONE METHODS ---
+//
+//
+
+func (a *Actor) Clone() *Actor {
+	if a == nil {
+		return nil
+	}
+
+	return &Actor{
+		Id:           a.Id,
+		Kind:         a.Kind,
+		MovePattern:  a.MovePattern,
+		Pos:          a.Pos,
+		Vitals:       maps.Clone(a.Vitals),
+		BaseAttrs:    maps.Clone(a.BaseAttrs),
+		DerivedAttrs: maps.Clone(a.DerivedAttrs),
+		Statuses:     maps.Clone(a.Statuses),
+		Effects:      a.CloneEffects(),
+		EquippedGear: a.CloneGear(),
+		Backpack:     a.Backpack.Clone(),
+		Traits:       a.CloneTraits(),
+		CurState:     a.CurState,
+	}
+}
+
+func (a *Actor) CloneEffects() map[EffectType]*Effect {
+	if a.Effects == nil {
+		return nil
+	}
+
+	clone := make(map[EffectType]*Effect, len(a.Effects))
+	for kind, effect := range a.Effects {
+		clone[kind] = effect.Clone()
+	}
+
+	return clone
+}
+
+func (a *Actor) CloneGear() map[ItemType]*Item {
+	if a.EquippedGear == nil {
+		return nil
+	}
+
+	clone := make(map[ItemType]*Item, len(a.EquippedGear))
+	for kind, gear := range a.EquippedGear {
+		clone[kind] = gear.Clone()
+	}
+
+	return clone
+}
+
+func (a *Actor) CloneTraits() map[TriggerType][]*Reaction {
+	if a.Traits == nil {
+		return nil
+	}
+
+	clone := make(map[TriggerType][]*Reaction)
+	for trigger, reactions := range a.Traits {
+		clone[trigger] = make([]*Reaction, 0, len(reactions))
+		for _, reaction := range reactions {
+			clone[trigger] = append(clone[trigger], reaction.Clone())
+		}
+	}
+
+	return clone
+}
+
+//
+//
+// --- PREDICATES ---
+//
 //
 
 func (a *Actor) HasStaminaForMove() bool {
@@ -180,7 +298,9 @@ func (a *Actor) HasStaminaForHit() bool {
 }
 
 //
+//
 // -- ACTOR'S EFFECT RELATED METHODS --
+//
 //
 
 // TickEffects - updates duration of all effects related to actor.
@@ -404,22 +524,6 @@ func (impact *ActorImpact) Apply(rng *rand.Rand) {
 	}
 }
 
-// whereEffectFrom - finds effect's origin.
-// Very likely it is straight from actor's active effects, but it also could be from actor's equipped gear.
-func (impact *ActorImpact) whereEffectFrom(effect *Effect) map[EffectType]*Effect {
-	if _, exists := impact.Actor.Effects[effect.Kind]; exists {
-		return impact.Actor.Effects
-	}
-
-	for _, gear := range impact.Actor.EquippedGear {
-		if _, exists := gear.Effects[effect.Kind]; exists {
-			return gear.Effects
-		}
-	}
-
-	return nil
-}
-
 // removeEffect - removes effect from its origin.
 // NOTE: Need to manually recompute actor's stats after this.
 func (impact *ActorImpact) removeEffect(origin map[EffectType]*Effect, effect *Effect) bool {
@@ -451,6 +555,106 @@ func (impact *ActorImpact) RemoveEffects() bool {
 	return removed
 }
 
+// whereEffectFrom - finds effect's origin.
+// Very likely it is straight from actor's active effects, but it also could be from actor's equipped gear.
+func (impact *ActorImpact) whereEffectFrom(effect *Effect) map[EffectType]*Effect {
+	if _, exists := impact.Actor.Effects[effect.Kind]; exists {
+		return impact.Actor.Effects
+	}
+
+	for _, gear := range impact.Actor.EquippedGear {
+		if _, exists := gear.Effects[effect.Kind]; exists {
+			return gear.Effects
+		}
+	}
+
+	return nil
+}
+
+//
+//
+// --- REACTION RELATED METHODS ---
+//
+//
+
+func ResolveReactions(trigger TriggerType, subj *ActorImpact, obj *ActorImpact, rng *rand.Rand) {
+	subjReactions := subj.CollectActorReactions(trigger)
+	ResolveSpecificReactions(subjReactions, subj, obj, rng)
+}
+
+func ResolveSpecificReactions(reactions []*Reaction, subj *ActorImpact, obj *ActorImpact, rng *rand.Rand) {
+	for _, reaction := range reactions {
+		if rng.Intn(Guaranteed) >= reaction.Chance {
+			continue
+		}
+
+		var source, target *ActorImpact
+		if reaction.Target == TargetSource {
+			source = subj
+			target = subj
+		} else {
+			if obj == nil {
+				continue
+			}
+			source = subj
+			target = obj
+		}
+
+		reaction.Perform(source, target)
+	}
+}
+
+func (impact *ActorImpact) CollectActorReactions(trigger TriggerType) []*Reaction {
+	actor := impact.Actor
+	reactions := make([]*Reaction, 0)
+
+	// Innate traits
+	reactions = append(reactions, actor.Traits[trigger]...)
+
+	// Gear procs
+	for _, gear := range actor.EquippedGear {
+		for _, effect := range gear.Effects {
+			if _, toRemove := impact.EffectsToRemove[effect]; !toRemove {
+				reactions = append(reactions, effect.Procs[trigger]...)
+			}
+		}
+		reactions = append(reactions, gear.Procs[trigger]...)
+	}
+
+	// Effect procs
+	for _, effect := range actor.Effects {
+		if _, toRemove := impact.EffectsToRemove[effect]; !toRemove {
+			reactions = append(reactions, effect.Procs[trigger]...)
+		}
+	}
+
+	return reactions
+
+}
+
+func (impact *ActorImpact) DecrementAllRelatedCharges(trigger TriggerType) {
+	impact.DecrementEffectsCharges(trigger, impact.Actor.Effects)
+	for _, gear := range impact.Actor.EquippedGear {
+		impact.DecrementEffectsCharges(trigger, gear.Effects)
+
+	}
+}
+
+func (impact *ActorImpact) DecrementEffectsCharges(trigger TriggerType, effects map[EffectType]*Effect) {
+	for _, effect := range effects {
+		if _, exists := impact.EffectsToRemove[effect]; exists {
+			continue
+		}
+
+		if effect.ConsumeOn == trigger && effect.Charges != -1 {
+			impact.EffectChargesChange[effect] -= 1
+			if effect.Charges+impact.EffectChargesChange[effect] == 0 {
+				impact.EffectsToRemove[effect] = true
+			}
+		}
+	}
+}
+
 //
 //
 // --- ACTOR CONSTRUCTORS ---
@@ -474,7 +678,7 @@ var PlayerDefault = AttrConf{
 	CounterAttackChance: MediumChance,
 }
 
-func NewDefaultPlayer(id ActorId, pos geometry.Point) *Actor {
+func NewDefaultPlayer(id ActorId, pos geometry.Point, backpackSlotsCapacity int) *Actor {
 	return &Actor{
 		Id:           id,
 		Kind:         PlayerType,
@@ -486,8 +690,35 @@ func NewDefaultPlayer(id ActorId, pos geometry.Point) *Actor {
 		Statuses:     make(map[StatusType]int),
 		Effects:      make(map[EffectType]*Effect),
 		EquippedGear: make(map[ItemType]*Item),
-		Backpack:     NewBackpack(),
+		Backpack:     NewBackpack(backpackSlotsCapacity),
 		Traits:       make(map[TriggerType][]*Reaction),
+	}
+}
+
+func NewCustomPlayer(id ActorId, pos geometry.Point, backpackSlotsCapacity int, difficulty float64) *Actor {
+	p := NewDefaultPlayer(id, pos, backpackSlotsCapacity)
+	AdjustStatsByDifficulty(p, difficulty)
+	return p
+}
+
+func AdjustStatsByDifficulty(actor *Actor, difficulty float64) {
+	for vital, val := range actor.Vitals {
+		if vital == Stamina {
+			continue
+		}
+		actor.Vitals[vital] = int(float64(val) * difficulty)
+	}
+	for attr, val := range actor.BaseAttrs {
+		if attr == MaxStamina || attr == StaminaRegen || attr == AttackStaminaCost || attr == MoveStaminaCost {
+			continue
+		}
+		actor.BaseAttrs[attr] = int(float64(val) * difficulty)
+	}
+	for attr, val := range actor.DerivedAttrs {
+		if attr == MaxStamina || attr == StaminaRegen || attr == AttackStaminaCost || attr == MoveStaminaCost {
+			continue
+		}
+		actor.DerivedAttrs[attr] = int(float64(val) * difficulty)
 	}
 }
 
@@ -520,6 +751,12 @@ func NewDefaultZombie(id ActorId, pos geometry.Point) *Actor {
 		Effects:      make(map[EffectType]*Effect),
 		Traits:       make(map[TriggerType][]*Reaction),
 	}
+}
+
+func NewCustomZombie(id ActorId, pos geometry.Point, difficulty float64) *Actor {
+	z := NewDefaultZombie(id, pos)
+	AdjustStatsByDifficulty(z, difficulty)
+	return z
 }
 
 //
@@ -577,6 +814,12 @@ func NewDefaultVampire(id ActorId, pos geometry.Point) *Actor {
 	return a
 }
 
+func NewCustomVampire(id ActorId, pos geometry.Point, difficulty float64) *Actor {
+	v := NewDefaultVampire(id, pos)
+	AdjustStatsByDifficulty(v, difficulty)
+	return v
+}
+
 //
 // -- GHOST --
 //
@@ -608,6 +851,12 @@ func NewDefaultGhost(id ActorId, pos geometry.Point) *Actor {
 	}
 
 	return a
+}
+
+func NewCustomGhost(id ActorId, pos geometry.Point, difficulty float64) *Actor {
+	g := NewDefaultGhost(id, pos)
+	AdjustStatsByDifficulty(g, difficulty)
+	return g
 }
 
 //
@@ -683,6 +932,12 @@ func NewDefaultOgre(id ActorId, pos geometry.Point) *Actor {
 	return a
 }
 
+func NewCustomOgre(id ActorId, pos geometry.Point, difficulty float64) *Actor {
+	o := NewDefaultOgre(id, pos)
+	AdjustStatsByDifficulty(o, difficulty)
+	return o
+}
+
 //
 // -- SNAKE-MAGE --
 //
@@ -723,6 +978,12 @@ func NewDefaultSnakeMage(id ActorId, pos geometry.Point) *Actor {
 	a.Traits[TriggerOnHit] = append(a.Traits[TriggerOnHit], OnHit)
 
 	return a
+}
+
+func NewCustomSnakeMage(id ActorId, pos geometry.Point, difficulty float64) *Actor {
+	sm := NewDefaultSnakeMage(id, pos)
+	AdjustStatsByDifficulty(sm, difficulty)
+	return sm
 }
 
 //
@@ -779,4 +1040,10 @@ func NewDefaultMimic(id ActorId, pos geometry.Point) *Actor {
 	}
 
 	return a
+}
+
+func NewCustomMimic(id ActorId, pos geometry.Point, difficulty float64) *Actor {
+	m := NewDefaultMimic(id, pos)
+	AdjustStatsByDifficulty(m, difficulty)
+	return m
 }

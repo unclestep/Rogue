@@ -27,6 +27,7 @@ func NewResolverService(session *entity.GameSession, seed int64) *Resolver {
 func (r *Resolver) SetSeed(seed int64) {
 	r.Seed = seed
 	r.Rng = rand.New(rand.NewSource(seed))
+	r.Combat.SetSeed(seed)
 }
 
 func (r *Resolver) ResolveMove(event *MoveEvent) []Event {
@@ -74,10 +75,12 @@ func (r *Resolver) ResolveMove(event *MoveEvent) []Event {
 		if actor.Kind != entity.PlayerType {
 			event.Mover.ResetStamina()
 		}
+		event.Mover.PosChange = geometry.NewDefaultPoint()
 		event.Outcome = MoveOutcomeCantMove
 		return []Event{event}
 	}
 	if !actor.HasStaminaForMove() {
+		event.Mover.PosChange = geometry.NewDefaultPoint()
 		event.Outcome = MoveOutcomeNoStamina
 		return []Event{event}
 	}

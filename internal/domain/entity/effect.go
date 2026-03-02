@@ -3,7 +3,6 @@ package entity
 import (
 	"log"
 	"maps"
-	"math/rand"
 )
 
 //
@@ -18,19 +17,20 @@ type Effect struct {
 	Charges  int        `json:"charges"`
 
 	// Passive bonuses
-	AttrsChange    map[AttrType]int   // Affects on the computation of derived attributes: it never modifies base attributes
-	StatusesChange map[StatusType]int // Can inflict status conditions such as Sleep, Stun, etc.
+	AttrsChange    map[AttrType]int   `json:"attrs_change"`    // Affects on the computation of derived attributes: it never modifies base attributes
+	StatusesChange map[StatusType]int `json:"statuses_change"` // Can inflict status conditions such as Sleep, Stun, etc.
 
 	// Active bonuses
 
-	Procs     map[TriggerType][]*Reaction // Triggers the special ability logic
-	ConsumeOn TriggerType                 // Situations when we need to decrement the charges
+	Procs     map[TriggerType][]*Reaction `json:"procs"`      // Triggers the special ability logic
+	ConsumeOn TriggerType                 `json:"consume_on"` // Situations when we need to decrement the charges
 }
 
 //
 // -- EFFECT TYPES --
 //
 
+//go:generate stringer -type=EffectType
 type EffectType int
 
 const (
@@ -62,6 +62,7 @@ const (
 // --- STATUSES ---
 //
 
+//go:generate stringer -type=StatusType
 type StatusType int
 
 const (
@@ -128,10 +129,14 @@ func (e *Effect) AddCharges(c int) {
 }
 
 //
-// -- UTILITIES --
+// -- GETTERS --
 //
 
 func (e *Effect) Clone() *Effect {
+	if e == nil {
+		return nil
+	}
+
 	clone := &Effect{
 		Kind:           e.Kind,
 		Duration:       e.Duration,
@@ -146,20 +151,7 @@ func (e *Effect) Clone() *Effect {
 		for trigger, reactions := range e.Procs {
 			clonedReactions := make([]*Reaction, len(reactions))
 			for i, r := range reactions {
-				clonedReactions[i] = &Reaction{
-					Kind:            r.Kind,
-					Target:          r.Target,
-					Chance:          r.Chance,
-					VitalsChange:    maps.Clone(r.VitalsChange),
-					BaseAttrsChange: maps.Clone(r.BaseAttrsChange),
-					StatusesChange:  maps.Clone(r.StatusesChange),
-				}
-				if r.EffectsToApply != nil {
-					clonedReactions[i].EffectsToApply = make(map[EffectType]*Effect, len(r.EffectsToApply))
-					for kind, eff := range r.EffectsToApply {
-						clonedReactions[i].EffectsToApply[kind] = eff.Clone()
-					}
-				}
+				clonedReactions[i] = r.Clone()
 			}
 			clone.Procs[trigger] = clonedReactions
 		}
@@ -172,6 +164,7 @@ func (e *Effect) Clone() *Effect {
 // --- REACTIONS ---
 //
 
+//go:generate stringer -type=TriggerType
 type TriggerType int
 
 const (
@@ -184,6 +177,7 @@ const (
 	TriggerEffectOnTurn
 )
 
+//go:generate stringer -type=TargetType
 type TargetType int
 
 const (
@@ -193,13 +187,13 @@ const (
 )
 
 type Reaction struct {
-	Kind            TriggerType
-	Target          TargetType
-	VitalsChange    map[VitalType]Change
-	BaseAttrsChange map[AttrType]Change
-	StatusesChange  map[StatusType]int
-	EffectsToApply  map[EffectType]*Effect
-	Chance          int
+	Kind            TriggerType            `json:"kind"`
+	Target          TargetType             `json:"target"`
+	VitalsChange    map[VitalType]Change   `json:"vitals_change"`
+	BaseAttrsChange map[AttrType]Change    `json:"base_attrs_change"`
+	StatusesChange  map[StatusType]int     `json:"statuses_change"`
+	EffectsToApply  map[EffectType]*Effect `json:"effects_to_apply"`
+	Chance          int                    `json:"chance"`
 }
 
 //
@@ -207,11 +201,11 @@ type Reaction struct {
 //
 
 type Change struct {
-	Holder TargetType
-	Vital  VitalType
-	Attr   AttrType
-	Amount int
-	Scale  float64
+	Holder TargetType `json:"holder"`
+	Vital  VitalType  `json:"vital"`
+	Attr   AttrType   `json:"attr"`
+	Amount int        `json:"amount"`
+	Scale  float64    `json:"scale"`
 }
 
 // Calc - calculates a change based on struct parameters.
@@ -242,7 +236,39 @@ func (c *Change) Calc(source, opponent *Actor) int {
 }
 
 //
-// -- REACTION RELATED METHODS --
+//
+// --- REACTION GETTERS ---
+//
+//
+
+func (r *Reaction) Clone() *Reaction {
+	if r == nil {
+		return nil
+	}
+
+	clone := &Reaction{
+		Kind:            r.Kind,
+		Target:          r.Target,
+		Chance:          r.Chance,
+		VitalsChange:    maps.Clone(r.VitalsChange),
+		BaseAttrsChange: maps.Clone(r.BaseAttrsChange),
+		StatusesChange:  maps.Clone(r.StatusesChange),
+	}
+
+	if r.EffectsToApply != nil {
+		clone.EffectsToApply = make(map[EffectType]*Effect, len(r.EffectsToApply))
+		for kind, eff := range r.EffectsToApply {
+			clone.EffectsToApply[kind] = eff.Clone()
+		}
+	}
+
+	return clone
+}
+
+//
+//
+// --- SETTERS ---
+//
 //
 
 func (r *Reaction) Perform(source, target *ActorImpact) {
@@ -279,84 +305,6 @@ func (r *Reaction) Perform(source, target *ActorImpact) {
 		target.AppliedEffects[kind] = effect.Clone()
 	}
 
-}
-
-func ResolveReactions(trigger TriggerType, subj *ActorImpact, obj *ActorImpact, rng *rand.Rand) {
-	subjReactions := subj.CollectActorReactions(trigger)
-	ResolveSpecificReactions(subjReactions, subj, obj, rng)
-}
-
-func ResolveSpecificReactions(reactions []*Reaction, subj *ActorImpact, obj *ActorImpact, rng *rand.Rand) {
-	for _, reaction := range reactions {
-		if rng.Intn(Guaranteed) >= reaction.Chance {
-			continue
-		}
-
-		var source, target *ActorImpact
-		if reaction.Target == TargetSource {
-			source = subj
-			target = subj
-		} else {
-			if obj == nil {
-				continue
-			}
-			source = subj
-			target = obj
-		}
-
-		reaction.Perform(source, target)
-	}
-}
-
-func (impact *ActorImpact) CollectActorReactions(trigger TriggerType) []*Reaction {
-	actor := impact.Actor
-	reactions := make([]*Reaction, 0)
-
-	// Innate traits
-	reactions = append(reactions, actor.Traits[trigger]...)
-
-	// Gear procs
-	for _, gear := range actor.EquippedGear {
-		for _, effect := range gear.Effects {
-			if _, toRemove := impact.EffectsToRemove[effect]; !toRemove {
-				reactions = append(reactions, effect.Procs[trigger]...)
-			}
-		}
-		reactions = append(reactions, gear.Procs[trigger]...)
-	}
-
-	// Effect procs
-	for _, effect := range actor.Effects {
-		if _, toRemove := impact.EffectsToRemove[effect]; !toRemove {
-			reactions = append(reactions, effect.Procs[trigger]...)
-		}
-	}
-
-	return reactions
-
-}
-
-func (impact *ActorImpact) DecrementAllRelatedCharges(trigger TriggerType) {
-	impact.DecrementEffectsCharges(trigger, impact.Actor.Effects)
-	for _, gear := range impact.Actor.EquippedGear {
-		impact.DecrementEffectsCharges(trigger, gear.Effects)
-
-	}
-}
-
-func (impact *ActorImpact) DecrementEffectsCharges(trigger TriggerType, effects map[EffectType]*Effect) {
-	for _, effect := range effects {
-		if _, exists := impact.EffectsToRemove[effect]; exists {
-			continue
-		}
-
-		if effect.ConsumeOn == trigger && effect.Charges != -1 {
-			impact.EffectChargesChange[effect] -= 1
-			if effect.Charges+impact.EffectChargesChange[effect] == 0 {
-				impact.EffectsToRemove[effect] = true
-			}
-		}
-	}
 }
 
 //

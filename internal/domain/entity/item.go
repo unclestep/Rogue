@@ -3,33 +3,97 @@ package entity
 
 import (
 	"github.com/unclestep/Rogue/pkg/geometry"
+	"maps"
 	"math/rand"
 )
 
 // NOTE: If an item is equipable gear, effects from this item should not be added to actor otherwise they will be taken into account twice
 type Item struct {
-	Id              ItemId
-	Pos             geometry.Point
-	Kind            ItemType
-	Value           int
-	VitalsChange    map[VitalType]int
-	BaseAttrsChange map[AttrType]int
-	Effects         map[EffectType]*Effect      // Ongoing stat modifiers
-	Procs           map[TriggerType][]*Reaction // Event-driven triggers
+	Id              ItemId                      `json:"id"`
+	Kind            ItemType                    `json:"kind"`
+	Pos             geometry.Point              `json:"pos"`
+	Value           int                         `json:"value"`
+	VitalsChange    map[VitalType]int           `json:"vitals_change"`
+	BaseAttrsChange map[AttrType]int            `json:"base_attrs_change"`
+	Effects         map[EffectType]*Effect      `json:"effects"` // Ongoing stat modifiers
+	Procs           map[TriggerType][]*Reaction `json:"procs"`   // Event-driven triggers
 }
 
 type ItemId int
 
 type ItemType int
 
+//go:generate stringer -type=ItemType
 const (
 	ItemTypeNotSpecified ItemType = iota
 	ItemTypeTreasure
+	ItemTypeKey
 	ItemTypeFood
 	ItemTypeElixir
 	ItemTypeScroll
 	ItemTypeWeapon
 )
+
+//
+// -- CLONE METHODS --
+//
+
+func (i *Item) Clone() *Item {
+	if i == nil {
+		return nil
+	}
+
+	return &Item{
+		Id:              i.Id,
+		Kind:            i.Kind,
+		Pos:             i.Pos,
+		Value:           i.Value,
+		VitalsChange:    maps.Clone(i.VitalsChange),
+		BaseAttrsChange: maps.Clone(i.BaseAttrsChange),
+		Effects:         i.CloneEffects(),
+		Procs:           i.CloneProcs(),
+	}
+
+}
+
+func (i *Item) CloneEffects() map[EffectType]*Effect {
+	if i.Effects == nil {
+		return nil
+	}
+
+	clone := make(map[EffectType]*Effect, len(i.Effects))
+	for kind, effect := range i.Effects {
+		clone[kind] = effect.Clone()
+	}
+
+	return clone
+}
+
+func (i *Item) CloneProcs() map[TriggerType][]*Reaction {
+	if i.Procs == nil {
+		return nil
+	}
+
+	clone := make(map[TriggerType][]*Reaction)
+	for trigger, reactions := range i.Procs {
+		clone[trigger] = make([]*Reaction, 0, len(reactions))
+		for _, reaction := range reactions {
+			clone[trigger] = append(clone[trigger], reaction.Clone())
+		}
+	}
+
+	return clone
+}
+
+//
+//
+// --- ITEM CONSTRUCTORS ---
+//
+//
+
+//
+// -- CONSTS --
+//
 
 const (
 	MinDuration = 1
@@ -49,7 +113,7 @@ const (
 )
 
 //
-// -- TREASURES CONSTRUCTORS --
+// -- TREASURE CONSTRUCTORS --
 //
 
 func NewTreasureItem(id ItemId, pos geometry.Point, value int) *Item {
@@ -61,6 +125,18 @@ func NewTreasureItem(id ItemId, pos geometry.Point, value int) *Item {
 	item.Value = value
 
 	return item
+}
+
+//
+// -- KEY CONSTRUCTORS --
+//
+
+func NewKeyItem(id ItemId, pos geometry.Point) *Item {
+	return &Item{
+		Id:   id,
+		Pos:  pos,
+		Kind: ItemTypeKey,
+	}
 }
 
 //

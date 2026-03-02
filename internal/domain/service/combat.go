@@ -62,7 +62,7 @@ func (c *Combat) ExecuteAttack(attacker, defender *entity.Actor) *AttackEvent {
 		return event
 	}
 
-	if attacker.Vitals[entity.Stamina] < attacker.BaseAttrs[entity.AttackStaminaCost] {
+	if attacker.HasStaminaForHit() {
 		event.Outcome = AttackOutcomeNoStamina
 		return event
 	}
@@ -81,10 +81,7 @@ func (c *Combat) ExecuteAttack(attacker, defender *entity.Actor) *AttackEvent {
 	event.Attacker.DecrementAllRelatedCharges(entity.TriggerOnPreHit)
 	event.Defender.DecrementAllRelatedCharges(entity.TriggerOnPreHit)
 
-	damage := attacker.DerivedAttrs[entity.Strength]
-	if damage > 0 {
-		event.Defender.VitalsChange[entity.HP] -= damage
-	}
+	event.Defender.VitalsChange[entity.HP] -= attacker.DerivedAttrs[entity.Strength]
 
 	entity.ResolveReactions(entity.TriggerOnHit, event.Attacker, event.Defender, c.rng)
 	event.Attacker.DecrementAllRelatedCharges(entity.TriggerOnHit)
@@ -134,7 +131,7 @@ func (event *AttackEvent) Perform(gs *entity.GameSession, rng *rand.Rand) {
 	if attacker.Vitals[entity.HP] <= 0 {
 		gs.RemoveActor(attacker.Id)
 		// Check player's health in main loop (not here)
-		if !gs.IsPlayerExists(attacker.Id) {
+		if !gs.IsPlayer(attacker.Id) {
 			gs.SpawnTreasures(attacker.Pos, calcTreasuresValue(attacker, rng))
 
 		}
@@ -143,7 +140,7 @@ func (event *AttackEvent) Perform(gs *entity.GameSession, rng *rand.Rand) {
 	if defender.Vitals[entity.HP] <= 0 {
 		gs.RemoveActor(defender.Id)
 		// Check player's health in main loop (not here)
-		if !gs.IsPlayerExists(defender.Id) {
+		if !gs.IsPlayer(defender.Id) {
 			gs.SpawnTreasures(defender.Pos, calcTreasuresValue(defender, rng))
 		}
 	}

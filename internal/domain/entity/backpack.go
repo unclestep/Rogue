@@ -6,30 +6,40 @@ import (
 )
 
 type Backpack struct {
-	Slots          map[ItemType][]*Item
-	TreasuresValue int
+	Slots          map[ItemType][]*Item `json:"slots"`
+	TreasuresValue int                  `json:"treasures_values"`
+	SlotsCapacity  int                  `json:"slots_capacity"`
 }
 
-func NewBackpack() *Backpack {
+//
+// -- CONSTRUCTORS --
+//
+
+func NewBackpack(slotsCapacity int) *Backpack {
 	return &Backpack{
 		Slots:          make(map[ItemType][]*Item),
 		TreasuresValue: 0,
+		SlotsCapacity:  slotsCapacity,
 	}
 }
 
-const (
-	MaxBackpackTypeCapacity = 9
-)
+//
+// -- PREDICATES --
+//
 
 func (b *Backpack) CanAddItem(itemType ItemType) bool {
 	items, exists := b.Slots[itemType]
 
-	if !exists || len(items) < MaxBackpackTypeCapacity {
+	if !exists || len(items) < b.SlotsCapacity {
 		return true
 	}
 
 	return false
 }
+
+//
+// -- MUTATORS --
+//
 
 func (b *Backpack) Add(i *Item) bool {
 	if i.Kind == ItemTypeTreasure {
@@ -37,7 +47,7 @@ func (b *Backpack) Add(i *Item) bool {
 		return true
 	}
 
-	if items, exists := b.Slots[i.Kind]; exists && len(items) == MaxBackpackTypeCapacity {
+	if items, exists := b.Slots[i.Kind]; exists && len(items) == b.SlotsCapacity {
 		return false
 	}
 
@@ -69,4 +79,29 @@ func (b *Backpack) RetrieveRecent(itemType ItemType) *Item {
 	b.Slots[itemType] = b.Slots[itemType][:last]
 
 	return recent
+}
+
+//
+// -- CLONE METHODS --
+//
+
+func (b *Backpack) Clone() *Backpack {
+	if b == nil {
+		return nil
+	}
+
+	clone := &Backpack{
+		Slots:          make(map[ItemType][]*Item, len(b.Slots)),
+		TreasuresValue: b.TreasuresValue,
+		SlotsCapacity:  b.SlotsCapacity,
+	}
+
+	for slot, items := range b.Slots {
+		clone.Slots[slot] = make([]*Item, 0, len(items))
+		for _, item := range items {
+			clone.Slots[slot] = append(clone.Slots[slot], item.Clone())
+		}
+	}
+
+	return clone
 }
