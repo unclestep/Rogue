@@ -97,6 +97,40 @@ func (p Point) EuclideanDistance(to Point) float64 {
 	return math.Sqrt(math.Pow(float64(to.X-p.X), 2) + math.Pow(float64(to.Y-p.Y), 2))
 }
 
+func (p Point) GetNormalizedVector(end Point) Point {
+	vec := Point{X: end.X - p.X, Y: end.Y - p.Y}
+
+	if vec.X > 0 {
+		vec.X = 1
+	} else if vec.X < 0 {
+		vec.X = -1
+	}
+	if vec.Y > 0 {
+		vec.Y = 1
+	} else if vec.Y < 0 {
+		vec.Y = -1
+	}
+
+	return vec
+}
+
+func (p Point) Normalize() Point {
+	norm := p
+
+	if norm.X > 0 {
+		norm.X = 1
+	} else if norm.X < 0 {
+		norm.X = -1
+	}
+	if norm.Y > 0 {
+		norm.Y = 1
+	} else if norm.Y < 0 {
+		norm.Y = -1
+	}
+
+	return norm
+}
+
 func (p *Point) String() string {
 	return fmt.Sprintf("(%v, %v)", p.X, p.Y)
 }
