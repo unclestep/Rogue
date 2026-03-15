@@ -2,27 +2,26 @@ package model
 
 import (
 	"maps"
-	"math/rand"
 
 	"github.com/unclestep/Rogue/pkg/geometry"
 )
 
 type Actor struct {
-	Id           ActorId                     `json:"id"`   // Unique identification of actor
-	Kind         ActorType                   `json:"kind"` // Actor type, e.g. Player, Vampire, Zombie
-	Label        ActorLabel                  `json:"label"`
-	MovePattern  MovePatternType             `json:"move_pattern"`
-	MoveDir      geometry.Point              `json:"move_dir"` // Move direction; can be changed by moving or turning view direction
-	Pos          geometry.Point              `json:"pos"`
-	Vitals       map[VitalType]int           `json:"vitals"`        // Non-constant stats, e.g. current hp, stamina
-	BaseAttrs    map[AttrType]int            `json:"base_attrs"`    // Base actor's stats: strength, max health etc.
-	DerivedAttrs map[AttrType]int            `json:"derived_attrs"` // Computed actor's stats: base attributes + effects + weapon
-	Statuses     map[StatusType]int          `json:"statuses"`      // Computed actor's statuses: statuses are granted by effects
-	Effects      map[EffectType]*Effect      `json:"effects"`       // Actor effects: permanent (reversible via dispelling) or temporary (expiring by turn count or usage limit). Effects of the same type stack by extending the duration; however, they do not increase or decrease the modified stats further
-	EquippedGear map[ItemType]*Item          `json:"equipped_gear"`
-	Backpack     *Backpack                   `json:"backpack"`
-	Traits       map[TriggerType][]*Reaction `json:"traits"` // What actor does in different situations
-	CurState     ActorStateType              `json:"cur_state"`
+	Id           ActorId   // Unique identification of actor
+	Kind         ActorType // Actor type, e.g. Player, Vampire, Zombie
+	Label        ActorLabel
+	MovePattern  MovePatternType
+	MoveDir      geometry.Point // Move direction; can be changed by moving or turning view direction
+	Pos          geometry.Point
+	Vitals       map[VitalType]int      // Non-constant stats, e.g. current hp, stamina
+	BaseAttrs    map[AttrType]int       // Base actor's stats: strength, max health etc.
+	DerivedAttrs map[AttrType]int       // Computed actor's stats: base attributes + effects + weapon
+	Statuses     map[StatusType]int     // Computed actor's statuses: statuses are granted by effects
+	Effects      map[EffectType]*Effect // Actor effects: permanent (reversible via dispelling) or temporary (expiring by turn count or usage limit). Effects of the same type stack by extending the duration; however, they do not increase or decrease the modified stats further
+	EquippedGear map[ItemType]*Item
+	Backpack     *Backpack
+	Traits       map[TriggerType][]*Reaction // What actor does in different situations
+	State        BehaviorType
 }
 
 type ActorId int64
@@ -227,12 +226,12 @@ const (
 //
 //
 
-type ActorStateType int
+type BehaviorType int
 
 const (
-	ActorStateIdle ActorStateType = iota
-	ActorStateWander
-	ActorStateChase
+	BehaviorIdle BehaviorType = iota
+	BehaviorWander
+	BehaviorChase
 )
 
 //
@@ -267,6 +266,12 @@ func (a *Actor) GetEffectsInfluence() (map[VitalType][]int, map[AttrType][]int) 
 
 //
 //
+// --- SETTERS ---
+//
+//
+
+//
+//
 // --- CLONE METHODS ---
 //
 //
@@ -289,7 +294,7 @@ func (a *Actor) Clone() *Actor {
 		EquippedGear: a.CloneGear(),
 		Backpack:     a.Backpack.Clone(),
 		Traits:       a.CloneTraits(),
-		CurState:     a.CurState,
+		State:        a.State,
 	}
 }
 
@@ -359,33 +364,6 @@ func (a *Actor) HasStaminaForAction() bool {
 //
 //
 
-// TickEffects - updates duration of all effects related to actor.
-// If effects modify something every turn, it will be applied.
-// Permanent effects stay permanent, unlimited charges are not spending.
-func (a *Actor) TickEffects(rng *rand.Rand) {
-	impact := NewActorImpact(a)
-	effects := a.CollectActiveEffects()
-
-	ResolveReactions(TriggerEffectOnTurn, impact, impact, rng)
-	impact.DecrementAllRelatedCharges(TriggerEffectOnTurn)
-
-	for _, effect := range effects {
-		if effect.IsTemp() {
-			effect.ExtendDuration(-1)
-		}
-		if effect.IsExpired() {
-			impact.EffectsToRemove[effect] = true
-		}
-	}
-
-	impact.Apply(rng)
-	a.RecomputeStats()
-
-	if a.Vitals[VitalHP] <= 0 {
-		a.Pos = NewInvalidPoint()
-	}
-}
-
 // CollectActiveEffects - collects all effects related to actor. It can be its proper effects and effects from its gear.
 func (a *Actor) CollectActiveEffects() []*Effect {
 	effects := make([]*Effect, 0)
@@ -446,270 +424,6 @@ func (a *Actor) ComputeStats() {
 
 		for status, val := range effect.StatusesChange {
 			a.Statuses[status] += val
-		}
-	}
-}
-
-//
-//
-// --- ACTOR IMPACT ---
-//
-//
-
-type ActorImpact struct {
-	Actor               *Actor
-	PosChange           geometry.Point
-	VitalsChange        map[VitalType]int
-	BaseAttrsChange     map[AttrType]int
-	StatusesChange      map[StatusType]int
-	AppliedEffects      map[EffectType]*Effect
-	EffectChargesChange map[*Effect]int
-	EffectsToRemove     map[*Effect]bool
-}
-
-func NewActorImpact(actor *Actor) *ActorImpact {
-	return &ActorImpact{
-		Actor:               actor,
-		VitalsChange:        make(map[VitalType]int),
-		BaseAttrsChange:     make(map[AttrType]int),
-		StatusesChange:      make(map[StatusType]int),
-		AppliedEffects:      make(map[EffectType]*Effect),
-		EffectChargesChange: make(map[*Effect]int),
-		EffectsToRemove:     make(map[*Effect]bool),
-	}
-}
-
-//
-// -- GETTERS --
-//
-
-func (impact *ActorImpact) GetEffect(effectType EffectType) *Effect {
-	personalEffect, hasInPersonal := impact.Actor.Effects[effectType]
-	if hasInPersonal {
-		return personalEffect
-	}
-	appliedEffect, hasInApplied := impact.AppliedEffects[effectType]
-	if hasInApplied {
-		return appliedEffect
-	}
-	return nil
-}
-
-func (impact *ActorImpact) GetStatus(statusType StatusType) (int, *Effect) {
-	for _, effect := range impact.Actor.Effects {
-		statusChange := effect.StatusesChange[statusType]
-		toRemove := impact.EffectsToRemove[effect]
-		if statusChange > 0 && !toRemove {
-			return statusChange, effect
-		}
-	}
-
-	for _, effect := range impact.AppliedEffects {
-		statusChange, statusExists := effect.StatusesChange[statusType]
-		toRemove := impact.EffectsToRemove[effect]
-		if statusExists && statusChange > 0 && !toRemove {
-			return statusChange, effect
-		}
-	}
-
-	return 0, nil
-}
-
-//
-// -- SETTERS --
-//
-
-func (impact *ActorImpact) ResetStamina() {
-	impact.VitalsChange[VitalStamina] -= impact.Actor.Vitals[VitalStamina]
-}
-
-//
-// -- MUTATORS --
-//
-
-func (impact *ActorImpact) ConsumeEffect(effect *Effect) {
-	if effect.IsLimited() && !impact.EffectsToRemove[effect] {
-		impact.EffectChargesChange[effect] -= 1
-		if effect.Charges+impact.EffectChargesChange[effect] <= 0 {
-			impact.EffectsToRemove[effect] = true
-		}
-	}
-}
-
-// Apply - applies all changes and removes expired, ran out or marked as needed to remove effects.
-func (impact *ActorImpact) Apply(rng *rand.Rand) {
-	actor := impact.Actor
-
-	// Remove effects before updating the stats to take into account TriggerOnExpire instructions
-
-	// Update effects charges and mark as needed to remove effects whose charges have run out
-	for effect, change := range impact.EffectChargesChange {
-		if effect.Charges != -1 {
-			effect.Charges += change
-			if effect.Charges <= 0 {
-				impact.EffectsToRemove[effect] = true
-			}
-		}
-	}
-
-	// Resolve trigger on expire before removing
-	for effect := range impact.EffectsToRemove {
-		if expireReactions, exists := effect.Procs[TriggerEffectOnExpire]; exists {
-			ResolveSpecificReactions(expireReactions, impact, impact, rng)
-		}
-	}
-
-	// Remove all effects marked as needed to remove
-	impact.RemoveEffects()
-
-	// Following lines are updating actor's stats
-	actor.Pos = actor.Pos.Add(impact.PosChange)
-
-	for vital, change := range impact.VitalsChange {
-		actor.Vitals[vital] += change
-	}
-
-	for attr, change := range impact.BaseAttrsChange {
-		actor.BaseAttrs[attr] += change
-	}
-
-	for status, change := range impact.StatusesChange {
-		actor.Statuses[status] += change
-	}
-
-	// Add applied effects
-	for _, effect := range impact.AppliedEffects {
-		actor.AddEffect(effect)
-	}
-}
-
-// removeEffect - removes effect from its origin.
-// NOTE: Need to manually recompute actor's stats after this.
-func (impact *ActorImpact) removeEffect(origin map[EffectType]*Effect, effect *Effect) bool {
-	if origin == nil {
-		return false
-	}
-
-	removed := false
-	if _, exists := origin[effect.Kind]; exists {
-		delete(origin, effect.Kind)
-		delete(impact.EffectsToRemove, effect)
-		removed = true
-	}
-	return removed
-}
-
-// RemoveEffects - removes all effects which were marked as needed to remove.
-// These effects do not necessarily expire or run out.
-// NOTE: Need to manually recompute actor's stats after this.
-func (impact *ActorImpact) RemoveEffects() bool {
-	removed := false
-
-	for effect := range impact.EffectsToRemove {
-		effectOrigin := impact.whereEffectFrom(effect)
-		removed = impact.removeEffect(effectOrigin, effect)
-	}
-	clear(impact.EffectsToRemove)
-
-	return removed
-}
-
-// whereEffectFrom - finds effect's origin.
-// Very likely it is straight from actor's active effects, but it also could be from actor's equipped gear.
-func (impact *ActorImpact) whereEffectFrom(effect *Effect) map[EffectType]*Effect {
-	if _, exists := impact.Actor.Effects[effect.Kind]; exists {
-		return impact.Actor.Effects
-	}
-
-	for _, gear := range impact.Actor.EquippedGear {
-		if _, exists := gear.Effects[effect.Kind]; exists {
-			return gear.Effects
-		}
-	}
-
-	return nil
-}
-
-//
-//
-// --- REACTION RELATED METHODS ---
-//
-//
-
-func ResolveReactions(trigger TriggerType, subj *ActorImpact, obj *ActorImpact, rng *rand.Rand) {
-	subjReactions := subj.CollectActorReactions(trigger)
-	ResolveSpecificReactions(subjReactions, subj, obj, rng)
-}
-
-func ResolveSpecificReactions(reactions []*Reaction, subj *ActorImpact, obj *ActorImpact, rng *rand.Rand) {
-	for _, reaction := range reactions {
-		if rng.Intn(Guaranteed) >= reaction.Chance {
-			continue
-		}
-
-		var source, target *ActorImpact
-		if reaction.Target == TargetSource {
-			source = subj
-			target = subj
-		} else {
-			if obj == nil {
-				continue
-			}
-			source = subj
-			target = obj
-		}
-
-		reaction.Perform(source, target)
-	}
-}
-
-func (impact *ActorImpact) CollectActorReactions(trigger TriggerType) []*Reaction {
-	actor := impact.Actor
-	reactions := make([]*Reaction, 0)
-
-	// Innate traits
-	reactions = append(reactions, actor.Traits[trigger]...)
-
-	// Gear procs
-	for _, gear := range actor.EquippedGear {
-		for _, effect := range gear.Effects {
-			if _, toRemove := impact.EffectsToRemove[effect]; !toRemove {
-				reactions = append(reactions, effect.Procs[trigger]...)
-			}
-		}
-		reactions = append(reactions, gear.Procs[trigger]...)
-	}
-
-	// Effect procs
-	for _, effect := range actor.Effects {
-		if _, toRemove := impact.EffectsToRemove[effect]; !toRemove {
-			reactions = append(reactions, effect.Procs[trigger]...)
-		}
-	}
-
-	return reactions
-
-}
-
-func (impact *ActorImpact) DecrementAllRelatedCharges(trigger TriggerType) {
-	impact.DecrementEffectsCharges(trigger, impact.Actor.Effects)
-	for _, gear := range impact.Actor.EquippedGear {
-		impact.DecrementEffectsCharges(trigger, gear.Effects)
-
-	}
-}
-
-func (impact *ActorImpact) DecrementEffectsCharges(trigger TriggerType, effects map[EffectType]*Effect) {
-	for _, effect := range effects {
-		if _, exists := impact.EffectsToRemove[effect]; exists {
-			continue
-		}
-
-		if effect.ConsumeOn == trigger && effect.Charges != -1 {
-			impact.EffectChargesChange[effect] -= 1
-			if effect.Charges+impact.EffectChargesChange[effect] == 0 {
-				impact.EffectsToRemove[effect] = true
-			}
 		}
 	}
 }

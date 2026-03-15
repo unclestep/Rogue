@@ -2,19 +2,14 @@ package service
 
 import (
 	"maps"
-	"math/rand"
 
 	"github.com/unclestep/Rogue/internal/domain/model"
 )
 
-type ItemUsage struct {
-	Session *model.GameSession
-}
+type ItemUsage struct{}
 
-func NewItemUsage(session *model.GameSession) *ItemUsage {
-	return &ItemUsage{
-		Session: session,
-	}
+func NewItemUsageService() *ItemUsage {
+	return &ItemUsage{}
 }
 
 type ItemUsageEvent struct {
@@ -41,10 +36,11 @@ func NewItemUsageEvent(a *model.Actor) *ItemUsageEvent {
 	}
 }
 
-func (event *ItemUsageEvent) Perform(session *model.GameSession, rng *rand.Rand) {
+func (event *ItemUsageEvent) Perform(ctx *model.SessionContext) {
 	actor := event.User.Actor
 
-	event.User.Apply(rng)
+	impactResolver := NewImpactResolverService()
+	impactResolver.ApplyImpact(event.User, ctx.Rng())
 
 	if event.RetrievedItem != nil {
 		actor.Backpack.RetrieveById(event.RetrievedItem.Id)
@@ -68,21 +64,20 @@ func (event *ItemUsageEvent) Perform(session *model.GameSession, rng *rand.Rand)
 			delete(actor.EquippedGear, event.DroppedItem.Kind)
 		}
 
-		dropPos, ok := session.Map.FindEmptyPoint(event.DroppedItem.Pos, 1)
+		dropPos, ok := ctx.Playthrough.Map.FindEmptyPoint(event.DroppedItem.Pos, 1)
 		if ok {
-			session.Map.SetItem(dropPos, int64(event.DroppedItem.Id))
-			session.Items[event.DroppedItem.Id] = event.DroppedItem
+			ctx.Playthrough.Map.SetItem(dropPos, int64(event.DroppedItem.Id))
+			ctx.Playthrough.Items[event.DroppedItem.Id] = event.DroppedItem
 		}
 	}
 }
 
-func (iu *ItemUsage) ConsumeItem(id model.ItemId, a *model.Actor) *ItemUsageEvent {
-	event := NewItemUsageEvent(a)
-	item, exists := iu.Session.Items[id]
-	if !exists {
-		event.Outcome = ItemUsageOutcomeNotFound
-		return event
+func (iu *ItemUsage) ConsumeItem(playthrough *model.Playthrough, item *model.Item, a *model.Actor) *ItemUsageEvent {
+	if item == nil || a == nil {
+		return nil
 	}
+
+	event := NewItemUsageEvent(a)
 
 	if !a.HasStaminaForAction() {
 		event.Outcome = ItemUsageOutcomeNoStamina
@@ -98,13 +93,12 @@ func (iu *ItemUsage) ConsumeItem(id model.ItemId, a *model.Actor) *ItemUsageEven
 	return event
 }
 
-func (iu *ItemUsage) EquipItem(newItemId model.ItemId, a *model.Actor) *ItemUsageEvent {
-	event := NewItemUsageEvent(a)
-	newItem, exists := iu.Session.Items[newItemId]
-	if !exists {
-		event.Outcome = ItemUsageOutcomeNotFound
-		return event
+func (iu *ItemUsage) EquipItem(playthrough *model.Playthrough, newItem *model.Item, a *model.Actor) *ItemUsageEvent {
+	if newItem == nil || a == nil {
+		return nil
 	}
+
+	event := NewItemUsageEvent(a)
 
 	if !a.HasStaminaForAction() {
 		event.Outcome = ItemUsageOutcomeNoStamina
@@ -124,13 +118,12 @@ func (iu *ItemUsage) EquipItem(newItemId model.ItemId, a *model.Actor) *ItemUsag
 	return event
 }
 
-func (iu *ItemUsage) UnequipItem(id model.ItemId, a *model.Actor) *ItemUsageEvent {
-	event := NewItemUsageEvent(a)
-	item, exists := iu.Session.Items[id]
-	if !exists {
-		event.Outcome = ItemUsageOutcomeNotFound
-		return event
+func (iu *ItemUsage) UnequipItem(item *model.Item, a *model.Actor) *ItemUsageEvent {
+	if item == nil || a == nil {
+		return nil
 	}
+
+	event := NewItemUsageEvent(a)
 
 	if !a.HasStaminaForAction() {
 		event.Outcome = ItemUsageOutcomeNoStamina

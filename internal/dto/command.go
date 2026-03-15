@@ -1,31 +1,34 @@
 package dto
 
 type Command struct {
-	CommandType CommandType
-	PlayerUUID  string
-	ItemID      int
+	PlaythroughId     int64
+	PlaythroughParams *PlaythroughParams
+	PlayerUUID        string
+	Action            ActionType
+	ItemID            int64
+	MoveVector        Vector
 }
 
-type CommandType int
+type PlaythroughParams struct {
+	RulesId int64
+	Seed    int64
+}
+
+type Vector struct {
+	X, Y int
+}
+
+type ActionType int
 
 const (
-	NoCommand CommandType = iota
-	CommandJoin
-	CommandAgree
-	CommandDisagree
-	CommandUp
-	CommandRight
-	CommandDown
-	CommandLeft
-	CommandConsumeItem
-	CommandEquipWeapon
-	CommandUnequipWeapon
+	NoAction ActionType = iota
+	ActionJoin
+	ActionLeave
+	ActionYes
+	ActionNo
+	ActionMove
+	ActionTick
+	ActionConsumeItem
+	ActionEquipWeapon
+	ActionUnequipWeapon
 )
-
-func (c *Command) IsMove() bool {
-	return c.CommandType == CommandUp || c.CommandType == CommandRight || c.CommandType == CommandDown || c.CommandType == CommandLeft
-}
-
-func (c *Command) IsAction() bool {
-	return c.CommandType == CommandConsumeItem || c.CommandType == CommandEquipWeapon || c.CommandType == CommandUnequipWeapon
-}

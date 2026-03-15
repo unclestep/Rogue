@@ -14,20 +14,20 @@ import (
 
 // Map - structure for gameboard
 type Map struct {
-	Width          int                              // Map width
-	Height         int                              // Map height
-	tileGrid       [][]Cell                         // Layer 1: Game landscape
-	itemGrid       [][]int64                        // Layer 2: Location of items
-	actorGrid      [][]int64                        // Layer 3: Location of actors
-	rooms          []*Room                          // Pointers to all level rooms
-	doors          map[geometry.Point]*DoorMetadata // For swift access
-	EntranceRoomId RoomId                           // Pointer to room with spawn point
-	ExitRoomId     RoomId                           // Pointer to room with exit point
-	ExitPoint      geometry.Point                   // End of level point
+	Width          int            // Map width
+	Height         int            // Map height
+	tileGrid       [][]Cell       // Layer 1: Game landscape
+	itemGrid       [][]int64      // Layer 2: Location of items
+	actorGrid      [][]int64      // Layer 3: Location of actors
+	rooms          []*Room        // Pointers to all level rooms
+	EntranceRoomId RoomId         // Pointer to room with spawn point
+	ExitRoomId     RoomId         // Pointer to room with exit point
+	ExitPoint      geometry.Point // End of level point
 
 	// Following attributes are not serialized to JSON: must be recalculated on load
 
-	roomMap map[RoomId]*Room `json:"-"` // For swift access
+	doors   map[geometry.Point]*DoorMetadata // For swift access
+	roomMap map[RoomId]*Room                 // For swift access
 }
 
 type MapBlueprint struct {
@@ -38,7 +38,6 @@ type MapBlueprint struct {
 	Doors          map[geometry.Point]*DoorMetadata
 	EntranceRoomId RoomId
 	ExitRoomId     RoomId
-	EntrancePoint  geometry.Point
 	ExitPoint      geometry.Point
 }
 
@@ -75,6 +74,7 @@ type Room struct {
 	Width  int            // Room width
 	Height int            // Room height
 	Center geometry.Point // Room center
+	doors  []*DoorMetadata
 
 	// Following attributes should not be serialized: must be recalculated on load
 
@@ -86,7 +86,7 @@ type Room struct {
 }
 
 // RoomId - room identification type
-type RoomId int
+type RoomId int64
 
 // Room constants
 const (
@@ -214,6 +214,26 @@ func (m *Map) GetActorID(p geometry.Point) (int64, bool) {
 	return id, true
 }
 
+func (m *Map) GetRooms() []*Room {
+	return m.rooms
+}
+
+func (m *Map) GetRoomCount() int {
+	return len(m.rooms)
+}
+
+func (m *Map) GetDoors() map[geometry.Point]*DoorMetadata {
+	return m.doors
+}
+
+func (m *Map) GetDoorKeyhole(door geometry.Point) (Keyhole, bool) {
+	if !m.IsClosedDoor(door) {
+		return 0, false
+	}
+
+	return m.doors[door].Keyhole, true
+}
+
 // GetRoomByPoint - returns room by point (like by coordinates)
 // Returns (pointer, true) to the room where the given point is located
 // Returns (nil, false) if point is outside any room
@@ -240,6 +260,18 @@ func (m *Map) GetRoomByID(id RoomId) (*Room, bool) {
 	}
 
 	return nil, false
+}
+
+func (r *Room) GetItemCapacity() int {
+	return len(r.emptyItemPoints)
+}
+
+func (r *Room) GetActorCapacity() int {
+	return len(r.emptyActorPoints)
+}
+
+func (r *Room) GetDoors() []*DoorMetadata {
+	return r.doors
 }
 
 //
@@ -285,6 +317,10 @@ func (m *Map) IsDoor(p geometry.Point) bool {
 // IsOpenDoor - returns true if there is an open door in given position and point is in bounds.
 func (m *Map) IsOpenDoor(p geometry.Point) bool {
 	return m.InBounds(p) && m.tileGrid[p.Y][p.X].Type == OpenDoor
+}
+
+func (m *Map) IsClosedDoor(p geometry.Point) bool {
+	return m.InBounds(p) && m.tileGrid[p.Y][p.X].Type == ClosedDoor
 }
 
 //
@@ -502,6 +538,21 @@ func (m *Map) TryOpenDoor(p geometry.Point, keyhole Keyhole) bool {
 	}
 
 	return false
+}
+
+func (m *Map) OpenDoor(p geometry.Point) {
+	if doorMeta, exists := m.doors[p]; exists {
+		m.tileGrid[p.Y][p.X].Type = OpenDoor
+		doorMeta.KeyPos = NewInvalidPoint()
+		doorMeta.Keyhole = KeyholeNone
+		doorMeta.Locked = false
+	}
+}
+
+func (m *Map) LockDoor(p geometry.Point) {
+	if _, exists := m.doors[p]; exists {
+		m.tileGrid[p.Y][p.X].Type = ClosedDoor
+	}
 }
 
 //
@@ -757,4 +808,22 @@ func (m *Map) String() string {
 	}
 
 	return sb.String()
+}
+
+//
+//
+// --- GETTERS FOR DTO ---
+//
+//
+
+func (m *Map) GetTileGrid() [][]Cell {
+	return m.tileGrid
+}
+
+func (m *Map) GetItemGrid() [][]int64 {
+	return m.itemGrid
+}
+
+func (m *Map) GetActorGrid() [][]int64 {
+	return m.actorGrid
 }

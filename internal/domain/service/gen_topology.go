@@ -13,18 +13,22 @@ import (
 
 type TopologyGenerator struct{}
 
+func NewTopologyGenerator() *TopologyGenerator {
+	return &TopologyGenerator{}
+}
+
 const (
 	SectorMargin = 1 // Right margin of one room + left margin of second room
 	MinRoomSize  = 3 // Wall + Floor + Wall
 
 )
 
-// Sector - structure for sector model
-type Sector struct {
+// sector - structure for sector model
+type sector struct {
 	xMin, yMin, xMax, yMax int
 }
 
-func (t *TopologyGenerator) Gen(session *model.GameSession, mapWidth, mapHeight, roomCountHorizontal, roomCountVertical int) *model.Map {
+func (t *TopologyGenerator) Gen(ctx *model.SessionContext, mapWidth, mapHeight, roomCountHorizontal, roomCountVertical int) *model.Map {
 	if !t.canFitGrid(mapWidth, mapHeight, roomCountHorizontal, roomCountVertical) {
 		return nil
 	}
@@ -34,9 +38,9 @@ func (t *TopologyGenerator) Gen(session *model.GameSession, mapWidth, mapHeight,
 		Height: mapHeight,
 	}
 
-	sectors := t.sectorize(mapWidth, mapHeight, roomCountHorizontal, roomCountVertical, session.Rng())
-	t.createRooms(blueprint, sectors, session.Rng())
-	t.createEntranceAndExit(blueprint, session.Rng())
+	sectors := t.sectorize(mapWidth, mapHeight, roomCountHorizontal, roomCountVertical, ctx.Rng())
+	t.createRooms(blueprint, sectors, ctx.Rng())
+	t.createEntranceAndExit(blueprint, ctx.Rng())
 	t.connectRooms(blueprint)
 
 	return model.NewMapFromBlueprint(blueprint)
@@ -62,8 +66,8 @@ func (t *TopologyGenerator) canFitGrid(mapWidth, mapHeight, roomCountHorizontal,
 // Function a grid of sector such that each sector has different sizes.
 // gridWidth - number of rooms horizontally, gridHeight - number of rooms vertically.
 // Returns matrix of sectors.
-func (t *TopologyGenerator) sectorize(gridWidth, gridHeight, mapWidth, mapHeight int, rng *rand.Rand) [][]Sector {
-	sectors := utils.CreateMatrix[Sector](gridHeight, gridWidth)
+func (t *TopologyGenerator) sectorize(gridWidth, gridHeight, mapWidth, mapHeight int, rng *rand.Rand) [][]sector {
+	sectors := utils.CreateMatrix[sector](gridHeight, gridWidth)
 	sectorWidth, sectorWidthRem := mapWidth/gridWidth, mapWidth%gridWidth
 	sectorHeight, sectorHeightRem := mapHeight/gridHeight, mapHeight%gridHeight
 
@@ -98,7 +102,7 @@ func (t *TopologyGenerator) sectorize(gridWidth, gridHeight, mapWidth, mapHeight
 			}
 			widthRemLimit -= randWidthRemAdd
 
-			sectors[row][col] = Sector{xMin: xMin, xMax: xMax, yMin: yMins[col], yMax: yMax}
+			sectors[row][col] = sector{xMin: xMin, xMax: xMax, yMin: yMins[col], yMax: yMax}
 			xMin = xMax + SectorMargin + 1
 			yMins[col] = yMax + SectorMargin + 1
 		}
@@ -108,7 +112,7 @@ func (t *TopologyGenerator) sectorize(gridWidth, gridHeight, mapWidth, mapHeight
 }
 
 // createRooms - creates one room in every sector.
-func (t *TopologyGenerator) createRooms(blueprint *model.MapBlueprint, sectors [][]Sector, rng *rand.Rand) {
+func (t *TopologyGenerator) createRooms(blueprint *model.MapBlueprint, sectors [][]sector, rng *rand.Rand) {
 	minHeight, minWidth := MinRoomSize, MinRoomSize
 	rows, cols := len(sectors), len(sectors[0])
 	blueprint.Rooms = make([]*model.Room, rows*cols)

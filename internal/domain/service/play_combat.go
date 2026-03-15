@@ -1,21 +1,24 @@
 package service
 
 import (
-	"math/rand"
-
 	"github.com/unclestep/Rogue/internal/domain/model"
 )
 
-type Combat struct{}
+type Combat struct {
+	impactResolver *ImpactResolver
+}
 
-func NewCombatService(session *model.GameSession, seed int64) *Combat {
-	return &Combat{}
+func NewCombatService(impactResolver *ImpactResolver) *Combat {
+	return &Combat{
+		impactResolver: impactResolver,
+	}
 }
 
 type AttackEvent struct {
-	Attacker *model.ActorImpact
-	Defender *model.ActorImpact
-	Outcome  AttackOutcome
+	Attacker       *model.ActorImpact
+	Defender       *model.ActorImpact
+	Outcome        AttackOutcome
+	impactResolver *ImpactResolver
 }
 
 //go:generate stringer -type=AttackOutcome
@@ -24,13 +27,17 @@ type AttackOutcome int
 const (
 	AttackOutcomeSuccess AttackOutcome = iota
 	AttackOutcomeMissed
-	AttackOutcomeStatusCantAttack
+	AttackOutcomeCantAttack
 	AttackOutcomeNoStamina
 	AttackOutcomeParticipantIsAlreadyDead
 )
 
-func (c *Combat) ExecuteAttack(session *model.GameSession, attacker, defender *model.Actor, rng *rand.Rand) *AttackEvent {
-	event := &AttackEvent{}
+func (c *Combat) ExecuteAttack(ctx *model.SessionContext, attacker, defender *model.Actor) *AttackEvent {
+	if attacker == nil || defender == nil {
+		return nil
+	}
+
+	event := &AttackEvent{impactResolver: c.impactResolver}
 
 	// If one of participants is already dead
 	if attacker.Vitals[model.VitalHP] <= 0 || defender.Vitals[model.VitalHP] <= 0 {
@@ -42,10 +49,7 @@ func (c *Combat) ExecuteAttack(session *model.GameSession, attacker, defender *m
 	event.Defender = model.NewActorImpact(defender)
 
 	if !attacker.CanAttack() {
-		if attacker.Kind != model.ActorPlayer {
-			event.Attacker.ResetStamina()
-		}
-		event.Outcome = AttackOutcomeStatusCantAttack
+		event.Outcome = AttackOutcomeCantAttack
 		return event
 	}
 
@@ -54,26 +58,31 @@ func (c *Combat) ExecuteAttack(session *model.GameSession, attacker, defender *m
 		return event
 	}
 
+	if attacker.Kind != model.ActorPlayer && defender.Kind != model.ActorPlayer {
+		event.Outcome = AttackOutcomeCantAttack
+		return event
+	}
+
 	event.Attacker.VitalsChange[model.VitalStamina] -= attacker.DerivedAttrs[model.AttrAttackStaminaCost]
 
-	model.ResolveReactions(model.TriggerOnPreHit, event.Attacker, event.Defender, rng)
-	model.ResolveReactions(model.TriggerOnPreHit, event.Defender, event.Attacker, rng)
+	c.impactResolver.ResolveReactions(model.TriggerOnPreHit, event.Attacker, event.Defender, ctx.Rng())
+	c.impactResolver.ResolveReactions(model.TriggerOnPreHit, event.Defender, event.Attacker, ctx.Rng())
 
 	chance := event.calcHitChance()
 	event.Attacker.DecrementAllRelatedCharges(model.TriggerOnPreHit)
 	event.Defender.DecrementAllRelatedCharges(model.TriggerOnPreHit)
 
-	if rng.Intn(100) < chance {
+	if ctx.Rng().Intn(model.Guaranteed) < chance {
 		event.Outcome = AttackOutcomeMissed
 		return event
 	}
 
 	event.Defender.VitalsChange[model.VitalHP] -= attacker.DerivedAttrs[model.AttrStrength]
 
-	model.ResolveReactions(model.TriggerOnHit, event.Attacker, event.Defender, rng)
+	c.impactResolver.ResolveReactions(model.TriggerOnHit, event.Attacker, event.Defender, ctx.Rng())
 	event.Attacker.DecrementAllRelatedCharges(model.TriggerOnHit)
 
-	model.ResolveReactions(model.TriggerOnDamage, event.Defender, event.Attacker, rng)
+	c.impactResolver.ResolveReactions(model.TriggerOnDamage, event.Defender, event.Attacker, ctx.Rng())
 	event.Defender.DecrementAllRelatedCharges(model.TriggerOnDamage)
 
 	return event
@@ -103,41 +112,23 @@ func (event *AttackEvent) WasPerformed() bool {
 	return event.Outcome == AttackOutcomeSuccess || event.Outcome == AttackOutcomeMissed
 }
 
-func (event *AttackEvent) Perform(gs *model.GameSession, rng *rand.Rand) {
+func (event *AttackEvent) Perform(ctx *model.SessionContext) {
 	if !event.WasPerformed() {
 		return
 	}
 
-	event.Attacker.Apply(rng)
-	event.Defender.Apply(rng)
+	event.impactResolver.ApplyImpact(event.Attacker, ctx.Rng())
+	event.impactResolver.ApplyImpact(event.Defender, ctx.Rng())
 
 	attacker := event.Attacker.Actor
 	defender := event.Defender.Actor
 
 	// Attacker can be killed by defender in different situations: effects, counter-attacks, special gear
 	if attacker.Vitals[model.VitalHP] <= 0 {
-		gs.RemoveActor(attacker.Id)
-		// Check player's health in main loop (not here)
-		if !gs.IsPlayer(attacker.Id) {
-			gs.SpawnTreasure(attacker.Pos, calcTreasuresValue(attacker, rng))
-		}
+		ctx.Playthrough.KillActor(attacker)
 	}
 
 	if defender.Vitals[model.VitalHP] <= 0 {
-		gs.RemoveActor(defender.Id)
-		// Check player's health in main loop (not here)
-		if !gs.IsPlayer(defender.Id) {
-			gs.SpawnTreasure(defender.Pos, calcTreasuresValue(defender, rng))
-		}
+		ctx.Playthrough.KillActor(defender)
 	}
-}
-
-func calcTreasuresValue(actor *model.Actor, rng *rand.Rand) int {
-	value := 0
-	value += actor.DerivedAttrs[model.AttrStrength] * 10
-	value += actor.DerivedAttrs[model.AttrMaxHP] * 10
-	value += actor.DerivedAttrs[model.AttrDexterity] * 5
-	value += actor.DerivedAttrs[model.AttrHostility] * 2
-	value += rng.Intn(int(float64(value) * 0.2))
-	return value
 }

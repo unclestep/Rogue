@@ -24,10 +24,31 @@ func NewBackpack(slotsCapacity int) *Backpack {
 }
 
 //
+// -- GETTERS --
+//
+
+func (b *Backpack) GetSlot(itemType ItemType) []*Item {
+	if b == nil || b.Slots == nil {
+		return nil
+	}
+
+	items, exists := b.Slots[itemType]
+	if !exists {
+		return nil
+	}
+
+	return items
+}
+
+//
 // -- PREDICATES --
 //
 
 func (b *Backpack) CanAddItem(itemType ItemType) bool {
+	if b == nil || b.Slots == nil {
+		return false
+	}
+
 	items, exists := b.Slots[itemType]
 
 	if !exists || len(items) < b.SlotsCapacity {

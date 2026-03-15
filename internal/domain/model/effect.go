@@ -151,6 +151,7 @@ func (e *Effect) Clone() *Effect {
 		Kind:           e.Kind,
 		Duration:       e.Duration,
 		Charges:        e.Charges,
+		VitalsChange:   maps.Clone(e.VitalsChange),
 		AttrsChange:    maps.Clone(e.AttrsChange),
 		StatusesChange: maps.Clone(e.StatusesChange),
 		ConsumeOn:      e.ConsumeOn,

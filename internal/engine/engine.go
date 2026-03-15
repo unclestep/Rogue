@@ -19,7 +19,7 @@ type GameEngine struct {
 	DataFromVM <-chan dto.Command
 	DataToVM   chan<- dto.WorldInfo
 	// dto session is created here
-	Session      *model.GameSession                     `json:"-"`
+	Session      *model.Playthrough                     `json:"-"`
 	GameLogic    *fsm.GameLogic                         `json:"game_logic"`
 	MonsterLogic *fsm.MonsterLogic                      `json:"monster_logic"`
 	VisibleAreas map[model.ActorId]*service.VisibleArea `jsov:"visible_areas"`
@@ -28,7 +28,7 @@ type GameEngine struct {
 	Rng          *rand.Rand
 }
 
-func NewGameEngine(dataFromVM <-chan dto.Command, dataToVM chan<- dto.WorldInfo, session *model.GameSession, onAutosave func(), onGameover func(), seed int64) *GameEngine {
+func NewGameEngine(dataFromVM <-chan dto.Command, dataToVM chan<- dto.WorldInfo, session *model.Playthrough, onAutosave func(), onGameover func(), seed int64) *GameEngine {
 	return &GameEngine{
 		DataFromVM:   dataFromVM,
 		DataToVM:     dataToVM,

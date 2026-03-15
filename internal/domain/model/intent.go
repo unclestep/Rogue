@@ -4,14 +4,22 @@ import (
 	"github.com/unclestep/Rogue/pkg/geometry"
 )
 
-type Intent interface{}
-
-type AttackIntent struct {
-	Attacker ActorId
-	Defender ActorId
+type Intent struct {
+	IntentType IntentType
+	Actor      ActorId
+	Defender   ActorId
+	ItemId     ItemId
+	Vector     geometry.Point
 }
 
-type MoveIntent struct {
-	Mover  ActorId
-	NewPos geometry.Point
-}
+type IntentType int
+
+const (
+	IntentUnknown IntentType = iota
+	IntentAttack
+	IntentMove
+	IntentInteract
+	IntentConsume
+	IntentEquip
+	IntentUnequip
+)

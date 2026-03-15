@@ -1,19 +1,33 @@
 package model
 
 type GameRules struct {
-	MaxDungeonCount        int                   `json:"max_dungeon_count"`         // Number of dungeons to complete the game
-	MaxHorizontalRoomCount int                   `json:"max_horizontal_room_count"` // Max number of rooms in horizontal
-	MaxVerticalRoomCount   int                   `json:"max_vertical_room_count"`   // Max number of rooms in vertical
-	ActorsConf             map[ActorLabel]*Actor `json:"actors_conf"`               // Actors configuration
-	ItemsConf              map[ItemLabel]*Item   `json:"items_conf"`                // Items configuration
-	GameDifficulty         float64               `json:"game_difficulty"`           // Chosen game difficulty (stable, not adjustable)
-	HpRestore              float64               `json:"hp_restore"`                // Percent of max health that will restore player's HP
-	TimeForMove            int                   `json:"time_for_move"`             // Time for move in seconds
+	Id                     RulesId
+	MaxDungeonCount        int // Number of dungeons to complete the game
+	DungeonWidth           int
+	DungeonHeight          int
+	MaxHorizontalRoomCount int                   // Max number of rooms in horizontal
+	MaxVerticalRoomCount   int                   // Max number of rooms in vertical
+	ActorsConf             map[ActorLabel]*Actor // Actors configuration
+	ItemsConf              map[ItemLabel]*Item   // Items configuration
+	DiffCurve              *DifficultyCurve
+	HpRestore              float64 // Percent of max health that will restore player's HP
+	TimeForMove            int     // Time for move in seconds
 }
 
-// DungGenParams encapsulates all variables used by the generator for a specific level.
+type RulesId int
+
+const (
+	DefaultRulesId = 0
+)
+
+type DifficultyCurve struct {
+	Start *DungParams `json:"start_gen_params"`
+	End   *DungParams `json:"end_gen_params"`
+}
+
+// DungParams encapsulates all variables used by the generator for a specific level.
 // It includes difficulty scaling, loot distribution, and door-lock mechanics.
-type DungGenParams struct {
+type DungParams struct {
 	// Monster Distribution: Total count and relative weights of types
 	// Number and difficulty of enemies increases
 	MaxMonsters            int                `json:"max_monsters"`             // Max possible number of monsters which can be spawned
@@ -34,33 +48,28 @@ type DungGenParams struct {
 	MinLockedDoors        int `json:"min_locked_doors"`        // Min possible number of key-locked doors which can be spawned
 }
 
-type DifficultyCurve struct {
-	Start *DungGenParams `json:"start_gen_params"`
-	End   *DungGenParams `json:"end_gen_params"`
-}
-
-func (d *DifficultyCurve) At(curDepth, totalDepth int, initDifficulty, dynamicDifficulty float64) *DungGenParams {
+func (d *DifficultyCurve) At(curDepth, totalDepth int, dynamicDifficulty float64) *DungParams {
 	progress := float64(curDepth-1) / float64(totalDepth-1)
 
 	start := d.Start
 	end := d.End
-	cur := DungGenParams{}
+	cur := DungParams{}
 
-	cur.MinMonsters = int(float64(interpolate(start.MinMonsters, end.MinMonsters, progress)) * initDifficulty * dynamicDifficulty)
-	cur.MaxMonsters = int(float64(interpolate(start.MaxMonsters, end.MaxMonsters, progress)) * initDifficulty * dynamicDifficulty)
+	cur.MinMonsters = int(float64(interpolate(start.MinMonsters, end.MinMonsters, progress)) * dynamicDifficulty)
+	cur.MaxMonsters = int(float64(interpolate(start.MaxMonsters, end.MaxMonsters, progress)) * dynamicDifficulty)
 
-	cur.MinItems = int(float64(interpolate(start.MinItems, end.MinItems, progress)) / (initDifficulty * dynamicDifficulty))
-	cur.MaxItems = int(float64(interpolate(start.MaxItems, end.MaxItems, progress)) / (initDifficulty * dynamicDifficulty))
+	cur.MinItems = int(float64(interpolate(start.MinItems, end.MinItems, progress)) / dynamicDifficulty)
+	cur.MaxItems = int(float64(interpolate(start.MaxItems, end.MaxItems, progress)) / dynamicDifficulty)
 
-	cur.MonsterStatsMultiplier = interpolate(start.MonsterStatsMultiplier, end.MonsterStatsMultiplier, progress) * initDifficulty * dynamicDifficulty
-	cur.TreasureValueMultiplier = interpolate(start.TreasureValueMultiplier, end.TreasureValueMultiplier, progress) * initDifficulty * dynamicDifficulty
+	cur.MonsterStatsMultiplier = interpolate(start.MonsterStatsMultiplier, end.MonsterStatsMultiplier, progress) * dynamicDifficulty
+	cur.TreasureValueMultiplier = interpolate(start.TreasureValueMultiplier, end.TreasureValueMultiplier, progress) * dynamicDifficulty
 
 	cur.MonsterWeights = interpolateWeights(start.MonsterWeights, end.MonsterWeights, progress)
 	cur.ItemWeights = interpolateWeights(start.ItemWeights, end.ItemWeights, progress)
 
 	if curDepth >= start.LockedDoorsStartDepth {
-		cur.MinLockedDoors = int(float64(interpolate(start.MinLockedDoors, end.MinLockedDoors, progress)) * initDifficulty * dynamicDifficulty)
-		cur.MaxLockedDoors = int(float64(interpolate(start.MaxLockedDoors, end.MaxLockedDoors, progress)) * initDifficulty * dynamicDifficulty)
+		cur.MinLockedDoors = int(float64(interpolate(start.MinLockedDoors, end.MinLockedDoors, progress)) * dynamicDifficulty)
+		cur.MaxLockedDoors = int(float64(interpolate(start.MaxLockedDoors, end.MaxLockedDoors, progress)) * dynamicDifficulty)
 	}
 
 	return &cur
@@ -83,4 +92,122 @@ func interpolateWeights[T comparable](start, end map[T]int, step float64) map[T]
 	}
 
 	return res
+}
+
+//
+//
+// --- DEFAULT CONSTRUCTORS ---
+//
+//
+
+func NewDefaultGameRules() *GameRules {
+	return &GameRules{
+		Id:                     0,
+		MaxDungeonCount:        21,
+		DungeonWidth:           80,
+		DungeonHeight:          24,
+		MaxHorizontalRoomCount: 3,
+		MaxVerticalRoomCount:   3,
+		ActorsConf:             createDefaultActorsConf(),
+		ItemsConf:              createDefaultItemsConf(),
+		DiffCurve:              createDefaultDiffCurve(),
+		HpRestore:              0.25,
+		TimeForMove:            0,
+	}
+}
+
+func createDefaultActorsConf() map[ActorLabel]*Actor {
+	return map[ActorLabel]*Actor{
+		ActorLabelPlayerCommon:    NewDefaultPlayer(0, NewInvalidPoint(), 9),
+		ActorLabelZombieCommon:    NewDefaultZombie(0, NewInvalidPoint()),
+		ActorLabelVampireCommon:   NewDefaultVampire(0, NewInvalidPoint()),
+		ActorLabelGhostCommon:     NewDefaultGhost(0, NewInvalidPoint()),
+		ActorLabelOgreCommon:      NewDefaultOgre(0, NewInvalidPoint()),
+		ActorLabelSnakeMageCommon: NewDefaultSnakeMage(0, NewInvalidPoint()),
+		ActorLabelMimicCommon:     NewDefaultMimic(0, NewInvalidPoint()),
+	}
+}
+
+func createDefaultItemsConf() map[ItemLabel]*Item {
+	return map[ItemLabel]*Item{
+		ItemLabelDefaultFood:     NewDefaultFood(0, NewInvalidPoint()),
+		ItemLabelDexterityElixir: NewDefaultDexterityElixir(0, NewInvalidPoint()),
+		ItemLabelStrengthElixir:  NewDefaultStrengthElixir(0, NewInvalidPoint()),
+		ItemLabelMaxHpElixir:     NewDefaultMaxHpElixir(0, NewInvalidPoint()),
+		ItemLabelDexterityScroll: NewDefaultDexterityScroll(0, NewInvalidPoint()),
+		ItemLabelStrengthScroll:  NewDefaultStrengthScroll(0, NewInvalidPoint()),
+		ItemLabelMaxHpScroll:     NewDefaultMaxHpScroll(0, NewInvalidPoint()),
+		ItemLabelDefaultWeapon:   NewDefaultWeapon(0, NewInvalidPoint()),
+	}
+}
+
+func createDefaultDiffCurve() *DifficultyCurve {
+	return &DifficultyCurve{
+		Start: createDefaultStartGenParams(),
+		End:   createDefaultEndGenParams(),
+	}
+}
+
+func createDefaultStartGenParams() *DungParams {
+	return &DungParams{
+		MaxMonsters: 3,
+		MinMonsters: 1,
+		MonsterWeights: map[ActorLabel]int{
+			ActorLabelZombieCommon:    40,
+			ActorLabelVampireCommon:   15,
+			ActorLabelGhostCommon:     10,
+			ActorLabelOgreCommon:      15,
+			ActorLabelSnakeMageCommon: 15,
+			ActorLabelMimicCommon:     5,
+		},
+		MonsterStatsMultiplier: 1.0,
+		MaxItems:               7,
+		MinItems:               3,
+		ItemWeights: map[ItemLabel]int{
+			ItemLabelDefaultFood:     40,
+			ItemLabelDexterityElixir: 10,
+			ItemLabelStrengthElixir:  10,
+			ItemLabelMaxHpElixir:     10,
+			ItemLabelDexterityScroll: 5,
+			ItemLabelStrengthScroll:  5,
+			ItemLabelMaxHpScroll:     5,
+			ItemLabelDefaultWeapon:   15,
+		},
+		TreasureValueMultiplier: 1.0,
+		LockedDoorsStartDepth:   5,
+		MaxLockedDoors:          2,
+		MinLockedDoors:          1,
+	}
+}
+
+func createDefaultEndGenParams() *DungParams {
+	return &DungParams{
+		MaxMonsters: 15,
+		MinMonsters: 12,
+		MonsterWeights: map[ActorLabel]int{
+			ActorLabelZombieCommon:    10,
+			ActorLabelVampireCommon:   25,
+			ActorLabelGhostCommon:     15,
+			ActorLabelOgreCommon:      25,
+			ActorLabelSnakeMageCommon: 20,
+			ActorLabelMimicCommon:     5,
+		},
+		MonsterStatsMultiplier: 2.0,
+		MaxItems:               3,
+		MinItems:               0,
+		ItemWeights: map[ItemLabel]int{
+			ItemLabelDefaultFood:     10,
+			ItemLabelDexterityElixir: 20,
+			ItemLabelStrengthElixir:  20,
+			ItemLabelMaxHpElixir:     20,
+			ItemLabelDexterityScroll: 5,
+			ItemLabelStrengthScroll:  5,
+			ItemLabelMaxHpScroll:     5,
+			ItemLabelDefaultWeapon:   15,
+		},
+		TreasureValueMultiplier: 2.0,
+		LockedDoorsStartDepth:   5,
+		MaxLockedDoors:          9,
+		MinLockedDoors:          7,
+	}
 }

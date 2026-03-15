@@ -8,8 +8,6 @@ import (
 )
 
 func TestCollectActiveEffects(t *testing.T) {
-	t.Parallel()
-
 	actor := model.NewDefaultPlayer(1, geometry.NewDefaultPoint(), 9)
 
 	t.Run("ActorWithoutGear", func(t *testing.T) {
@@ -71,8 +69,6 @@ func TestCollectActiveEffects(t *testing.T) {
 }
 
 func TestAddEffect(t *testing.T) {
-	t.Parallel()
-
 	actor := model.NewDefaultPlayer(1, geometry.NewDefaultPoint(), 9)
 
 	t.Run("Stack temp and limited effects", func(t *testing.T) {
@@ -118,8 +114,6 @@ func TestAddEffect(t *testing.T) {
 }
 
 func TestRecomputeStats(t *testing.T) {
-	t.Parallel()
-
 	actor := model.NewDefaultPlayer(1, geometry.NewDefaultPoint(), 9)
 	baseStrength := actor.BaseAttrs[model.AttrStrength]
 
@@ -168,56 +162,4 @@ func TestRecomputeStats(t *testing.T) {
 			t.Errorf("Expected StatusSleep = 0, got %d", val)
 		}
 	})
-}
-
-func TestActorClone(t *testing.T) {
-	t.Parallel()
-
-	original := &model.Actor{
-		Id:   1,
-		Kind: model.ActorPlayer,
-		Pos:  geometry.Point{X: 10, Y: 20},
-		Vitals: map[model.VitalType]int{
-			model.VitalHP: 100,
-		},
-		BaseAttrs: map[model.AttrType]int{
-			model.AttrStrength: 15,
-		},
-		DerivedAttrs: map[model.AttrType]int{
-			model.AttrStrength: 15,
-		},
-		Statuses: make(map[model.StatusType]int),
-	}
-
-	cloned := original.Clone()
-
-	if cloned == original {
-		t.Errorf("Expected cloned actor to be a different pointer")
-	}
-
-	if cloned.Id != original.Id || cloned.Kind != original.Kind || cloned.Pos != original.Pos {
-		t.Errorf("Expected scalar fields to be copied identically")
-	}
-
-	// Modify cloned maps to ensure they don't affect the original (deep copy check)
-	cloned.Vitals[model.VitalHP] = 50
-	if original.Vitals[model.VitalHP] == 50 {
-		t.Errorf("Expected deep copy of Vitals, changing clone altered original")
-	}
-
-	cloned.BaseAttrs[model.AttrStrength] = 99
-	if original.BaseAttrs[model.AttrStrength] == 99 {
-		t.Errorf("Expected deep copy of BaseAttrs, changing clone altered original")
-	}
-}
-
-func TestActorCloneNilActor(t *testing.T) {
-	t.Parallel()
-
-	var original *model.Actor = nil
-	cloned := original.Clone()
-
-	if cloned != nil {
-		t.Errorf("Expected nil when cloning a nil actor, got %v", cloned)
-	}
 }
