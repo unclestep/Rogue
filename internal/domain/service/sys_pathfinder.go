@@ -1,10 +1,11 @@
 package service
 
 import (
+	"math"
+
 	"github.com/unclestep/Rogue/internal/domain/model"
 	"github.com/unclestep/Rogue/pkg/algorithm"
 	"github.com/unclestep/Rogue/pkg/geometry"
-	"math"
 )
 
 type Pathfinder struct {
@@ -53,7 +54,6 @@ func (p *Pathfinder) AFind(m *model.Map, p1, p2 geometry.Point) ([]geometry.Poin
 	}
 
 	return path, true
-
 }
 
 type followingGraph struct {
@@ -249,7 +249,6 @@ func (d dijkstraDiagonal) findOptimals(ctx *model.SessionContext, scentMap [][]i
 	}
 
 	return mins
-
 }
 
 type dijkstraMoore struct{}

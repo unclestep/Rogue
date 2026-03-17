@@ -1,8 +1,9 @@
 package model
 
 import (
-	"github.com/unclestep/Rogue/pkg/geometry"
 	"math/rand"
+
+	"github.com/unclestep/Rogue/pkg/geometry"
 )
 
 type SessionContext struct {
@@ -22,6 +23,10 @@ func NewSessionContext(p *Playthrough) *SessionContext {
 }
 
 func (ctx *SessionContext) BuildScentMaps() {
+	if ctx.Playthrough.Map == nil {
+		return
+	}
+
 	ctx.buildWanderMap()
 	ctx.buildChaseMap()
 }

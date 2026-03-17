@@ -14,20 +14,19 @@ import (
 
 // Map - structure for gameboard
 type Map struct {
-	Width          int            // Map width
-	Height         int            // Map height
-	tileGrid       [][]Cell       // Layer 1: Game landscape
-	itemGrid       [][]int64      // Layer 2: Location of items
-	actorGrid      [][]int64      // Layer 3: Location of actors
-	rooms          []*Room        // Pointers to all level rooms
-	EntranceRoomId RoomId         // Pointer to room with spawn point
-	ExitRoomId     RoomId         // Pointer to room with exit point
-	ExitPoint      geometry.Point // End of level point
+	Width          int                              // Map width
+	Height         int                              // Map height
+	tileGrid       [][]Cell                         // Layer 1: Game landscape
+	itemGrid       [][]int64                        // Layer 2: Location of items
+	actorGrid      [][]int64                        // Layer 3: Location of actors
+	rooms          []*Room                          // Pointers to all level rooms
+	doors          map[geometry.Point]*DoorMetadata // Doors do not belong to the rooms
+	EntranceRoomId RoomId                           // Pointer to room with spawn point
+	ExitRoomId     RoomId                           // Pointer to room with exit point
+	ExitPoint      geometry.Point                   // End of level point
 
 	// Following attributes are not serialized to JSON: must be recalculated on load
-
-	doors   map[geometry.Point]*DoorMetadata // For swift access
-	roomMap map[RoomId]*Room                 // For swift access
+	roomMap map[RoomId]*Room // For swift access
 }
 
 type MapBlueprint struct {
@@ -39,6 +38,16 @@ type MapBlueprint struct {
 	EntranceRoomId RoomId
 	ExitRoomId     RoomId
 	ExitPoint      geometry.Point
+}
+
+func NewMapBlueprint(width, height int) *MapBlueprint {
+	return &MapBlueprint{
+		Width:    width,
+		Height:   height,
+		TileGrid: utils.CreateMatrix[Cell](height, width),
+		Rooms:    make([]*Room, 0),
+		Doors:    make(map[geometry.Point]*DoorMetadata),
+	}
 }
 
 // Cell - structure for cell model
@@ -61,12 +70,6 @@ const (
 	Exit
 )
 
-// Map constants
-const (
-	SectorMargin          = 1 // Right margin of one room + left margin of second room
-	PrimaryPoolMultiplier = 0.5
-)
-
 // Room - structure for room model
 type Room struct {
 	Id     RoomId
@@ -74,7 +77,6 @@ type Room struct {
 	Width  int            // Room width
 	Height int            // Room height
 	Center geometry.Point // Room center
-	doors  []*DoorMetadata
 
 	// Following attributes should not be serialized: must be recalculated on load
 
@@ -88,7 +90,7 @@ type Room struct {
 // RoomId - room identification type
 type RoomId int64
 
-// Room constants
+// InvalidRoomId constant
 const (
 	InvalidRoomId = 0
 )
@@ -102,14 +104,13 @@ type DoorMetadata struct {
 	Pos     geometry.Point `json:"pos"`     // Door position
 	Locked  bool           `json:"locked"`  // Lock state
 	Keyhole Keyhole        `json:"keyhole"` // Key color which opens this door
-	KeyPos  geometry.Point `json:"key_pos"` // Position of key which opens this door
 }
 
 // Keyhole - a lock identifier used for key-to-door matching
 type Keyhole int
 
 const (
-	KeyholeNone Keyhole = 0 // Door is openor item is not a key
+	KeyholeNone Keyhole = 0
 )
 
 //
@@ -146,20 +147,15 @@ func (m *Map) Hydrate() {
 
 		room.emptyItemPoints = make([]geometry.Point, 0, roomSquare)
 		room.emptyItemPointsIndex = make(map[geometry.Point]int, roomSquare)
-		if room.Id != m.EntranceRoomId {
-			m.RefreshEmptyItemPoints(room)
-		}
+		m.RefreshEmptyItemPoints(room)
 
 		room.emptyActorPoints = make([]geometry.Point, 0, roomSquare)
 		room.emptyActorPointsIndex = make(map[geometry.Point]int, roomSquare)
-		if room.Id != m.EntranceRoomId {
-			m.RefreshEmptyActorPoints(room)
-		}
+		m.RefreshEmptyActorPoints(room)
 	}
 
 	exitRoom := m.roomMap[m.ExitRoomId]
 	removePoint(m.ExitPoint, &exitRoom.emptyItemPoints, exitRoom.emptyItemPointsIndex)
-	removePoint(m.ExitPoint, &exitRoom.emptyActorPoints, exitRoom.emptyActorPointsIndex)
 }
 
 //
@@ -270,10 +266,6 @@ func (r *Room) GetActorCapacity() int {
 	return len(r.emptyActorPoints)
 }
 
-func (r *Room) GetDoors() []*DoorMetadata {
-	return r.doors
-}
-
 //
 //
 // --- PREDICATES ---
@@ -296,7 +288,9 @@ func (m *Map) IsWalkable(p geometry.Point) bool {
 
 // CanMoveTo - returns true if given p is walkable and free of actors
 func (m *Map) CanMoveTo(p geometry.Point) bool {
-	return m.IsWalkable(p) && !m.IsActor(p)
+	room, _ := m.GetRoomByPoint(p)
+	_, acceptActors := room.emptyActorPointsIndex[p]
+	return m.IsWalkable(p) && !m.IsActor(p) && acceptActors
 }
 
 // IsItem - returns true if there is an item in given position and point is in bounds.
@@ -356,6 +350,11 @@ func (m *Map) SetItem(p geometry.Point, id int64) bool {
 // If given id != 0 also reduces room capacity to locate other actors (affects generation algorithms).
 // If given id == 0 increases room capacity so more actors can be generated in that room.
 func (m *Map) SetActor(p geometry.Point, id int64) bool {
+	if m == nil {
+		log.Printf("[ERROR] Can't set actor at %v: map is nil\n", p)
+		return false
+	}
+
 	if !m.IsWalkable(p) {
 		log.Printf("[ERROR] Can't set actor at %v: tile is not walkable\n", p)
 		return false
@@ -543,14 +542,15 @@ func (m *Map) TryOpenDoor(p geometry.Point, keyhole Keyhole) bool {
 func (m *Map) OpenDoor(p geometry.Point) {
 	if doorMeta, exists := m.doors[p]; exists {
 		m.tileGrid[p.Y][p.X].Type = OpenDoor
-		doorMeta.KeyPos = NewInvalidPoint()
 		doorMeta.Keyhole = KeyholeNone
 		doorMeta.Locked = false
 	}
 }
 
-func (m *Map) LockDoor(p geometry.Point) {
-	if _, exists := m.doors[p]; exists {
+func (m *Map) LockDoor(p geometry.Point, keyhole Keyhole) {
+	if door, exists := m.doors[p]; exists {
+		door.Locked = true
+		door.Keyhole = keyhole
 		m.tileGrid[p.Y][p.X].Type = ClosedDoor
 	}
 }
@@ -561,7 +561,7 @@ func (m *Map) LockDoor(p geometry.Point) {
 //
 //
 
-// ClearLevel - clears topology, items, actors, doors, keys.
+// ClearDungeon  - clears topology, items, actors, doors, keys.
 func (m *Map) ClearDungeon() {
 	m.ClearTopology()
 	m.ClearItems()
@@ -708,8 +708,8 @@ func (m *Map) FindEmptyPoint(center geometry.Point, rad int) (geometry.Point, bo
 			}
 		}
 
-		// Left and Right edges (excluding corners to avoid double-checking)
-		for j := minY + 1; j <= maxY-1; j++ {
+		// Left and Right edges
+		for j := minY; j <= maxY; j++ {
 			if curLeft >= roomMinX && isValid(curLeft, j) {
 				return geometry.Point{X: curLeft, Y: j}, true
 			}
@@ -719,7 +719,7 @@ func (m *Map) FindEmptyPoint(center geometry.Point, rad int) (geometry.Point, bo
 		}
 
 		// Optimization: if we are out of room bounds on all sides, stop searching
-		if minX <= roomMinX && maxX >= roomMaxX && minY <= roomMinY && maxY >= roomMaxY {
+		if minX == roomMinX && maxX == roomMaxX && minY == roomMinY && maxY == roomMaxY {
 			break
 		}
 	}
@@ -738,29 +738,11 @@ func (m *Map) FindEmptyPoint(center geometry.Point, rad int) (geometry.Point, bo
 // -- DEBUG UTILITIES --
 //
 
-// Constants for coloring the text
-const (
-	ColorReset  = "\033[0m"
-	ColorRed    = "\033[31m"
-	ColorGreen  = "\033[32m"
-	ColorYellow = "\033[33m"
-	ColorBlue   = "\033[34m"
-	ColorPurple = "\033[35m"
-	ColorCyan   = "\033[36m"
-)
-
 // String - returns string representation of the map
 func (m *Map) String() string {
-	colors := []string{ColorRed, ColorGreen, ColorYellow, ColorBlue, ColorPurple, ColorCyan}
-
-	keys := make(map[geometry.Point]struct{})
-	for _, door := range m.doors {
-		if door.Locked {
-			keys[door.KeyPos] = struct{}{}
-		}
-	}
-
 	var sb strings.Builder
+
+	entranceCenter := m.GetEntranceRoom().Center
 
 	for row := range m.tileGrid {
 		for col := range m.tileGrid[row] {
@@ -775,9 +757,6 @@ func (m *Map) String() string {
 			case OpenDoor:
 				ch = '/'
 			case ClosedDoor:
-				keyID := int(m.doors[geometry.Point{X: col, Y: row}].Keyhole)
-				colorIndex := keyID % len(colors)
-				sb.WriteString(colors[colorIndex])
 				ch = '%'
 			case Corridor:
 				ch = '*'
@@ -788,26 +767,27 @@ func (m *Map) String() string {
 			}
 
 			itemID := m.itemGrid[row][col]
-
-			if _, isKeyPos := keys[geometry.Point{X: col, Y: row}]; isKeyPos {
-				colorIndex := itemID % int64(len(colors))
-				sb.WriteString(colors[colorIndex])
-				ch = 'K'
-			} else if itemID != 0 {
+			if itemID != 0 {
 				ch = 'I'
-			}
-
-			if m.actorGrid[row][col] != 0 {
+			} else if m.actorGrid[row][col] != 0 {
 				ch = 'A'
 			}
 
+			p := geometry.Point{X: col, Y: row}
+			if p == entranceCenter {
+				ch = '@'
+			}
+
 			sb.WriteRune(ch)
-			sb.WriteString(ColorReset)
 		}
 		sb.WriteRune('\n')
 	}
 
 	return sb.String()
+}
+
+func (r *Room) GetEmptyItemPoints() []geometry.Point {
+	return r.emptyItemPoints
 }
 
 //

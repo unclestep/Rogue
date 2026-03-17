@@ -1,10 +1,11 @@
 package service
 
 import (
+	"slices"
+
 	"github.com/unclestep/Rogue/internal/domain/model"
 	"github.com/unclestep/Rogue/pkg/algorithm"
 	"github.com/unclestep/Rogue/pkg/conv"
-	"slices"
 )
 
 type DungeonGenerator struct {
@@ -14,12 +15,12 @@ type DungeonGenerator struct {
 	doorLocker        *DoorLocker
 }
 
-func NewDungeonGeneratorService(rules *model.GameRules) *DungeonGenerator {
+func NewDungeonGeneratorService(rules *model.GameRules, topGen *TopologyGenerator, objGen *ObjectSpawner, doorLock *DoorLocker) *DungeonGenerator {
 	return &DungeonGenerator{
 		rules:             rules,
-		topologyGenerator: NewTopologyGenerator(),
-		objectSpawner:     NewObjectSpawner(rules),
-		doorLocker:        NewDoorLocker(),
+		topologyGenerator: topGen,
+		objectSpawner:     objGen,
+		doorLocker:        doorLock,
 	}
 }
 
@@ -45,11 +46,11 @@ func (d *DungeonGenerator) Gen(ctx *model.SessionContext) {
 	d.showPlayers(ctx)
 }
 
-func (d *DungeonGenerator) prepareNextDung(session *model.Playthrough) *model.DungParams {
-	session.Depth++
+func (d *DungeonGenerator) prepareNextDung(play *model.Playthrough) *model.DungParams {
+	play.Depth++
 
-	genParams := d.rules.DiffCurve.At(session.Depth, d.rules.MaxDungeonCount, session.DynamicDifficulty)
-	updateItemWeights, updateActorWeights := session.AdaptDifficulty()
+	genParams := d.rules.DiffCurve.At(play.Depth, d.rules.MaxDungeonCount, play.DynamicDifficulty)
+	updateItemWeights, updateActorWeights := play.AdaptDifficulty()
 	for label, change := range updateItemWeights {
 		genParams.ItemWeights[label] += change
 	}
@@ -57,7 +58,7 @@ func (d *DungeonGenerator) prepareNextDung(session *model.Playthrough) *model.Du
 		genParams.MonsterWeights[label] += change
 	}
 
-	session.ClearMetrics()
+	play.ClearMetrics()
 
 	return genParams
 }

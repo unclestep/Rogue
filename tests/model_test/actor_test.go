@@ -1,4 +1,4 @@
-package entity_test
+package model_test
 
 import (
 	"testing"
@@ -162,4 +162,52 @@ func TestRecomputeStats(t *testing.T) {
 			t.Errorf("Expected StatusSleep = 0, got %d", val)
 		}
 	})
+}
+
+func TestActorClone(t *testing.T) {
+	original := &model.Actor{
+		Id:   1,
+		Kind: model.ActorPlayer,
+		Pos:  geometry.Point{X: 10, Y: 20},
+		Vitals: map[model.VitalType]int{
+			model.VitalHP: 100,
+		},
+		BaseAttrs: map[model.AttrType]int{
+			model.AttrStrength: 15,
+		},
+		DerivedAttrs: map[model.AttrType]int{
+			model.AttrStrength: 15,
+		},
+		Statuses: make(map[model.StatusType]int),
+	}
+
+	cloned := original.Clone()
+
+	if cloned == original {
+		t.Errorf("Expected cloned actor to be a different pointer")
+	}
+
+	if cloned.Id != original.Id || cloned.Kind != original.Kind || cloned.Pos != original.Pos {
+		t.Errorf("Expected scalar fields to be copied identically")
+	}
+
+	// Modify cloned maps to ensure they don't affect the original (deep copy check)
+	cloned.Vitals[model.VitalHP] = 50
+	if original.Vitals[model.VitalHP] == 50 {
+		t.Errorf("Expected deep copy of Vitals, changing clone altered original")
+	}
+
+	cloned.BaseAttrs[model.AttrStrength] = 99
+	if original.BaseAttrs[model.AttrStrength] == 99 {
+		t.Errorf("Expected deep copy of BaseAttrs, changing clone altered original")
+	}
+}
+
+func TestActorCloneNilActor(t *testing.T) {
+	var original *model.Actor = nil
+	cloned := original.Clone()
+
+	if cloned != nil {
+		t.Errorf("Expected nil when cloning a nil actor, got %v", cloned)
+	}
 }

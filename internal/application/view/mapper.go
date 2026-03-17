@@ -15,12 +15,12 @@ import (
 	"github.com/unclestep/Rogue/pkg/geometry"
 )
 
-type ViewMapper struct {
+type Mapper struct {
 	repo port.PlaythroughRepository
 }
 
-func NewTuiMapper(repo port.PlaythroughRepository) *ViewMapper {
-	return &ViewMapper{
+func NewMapper(repo port.PlaythroughRepository) *Mapper {
+	return &Mapper{
 		repo: repo,
 	}
 }
@@ -31,18 +31,23 @@ func NewTuiMapper(repo port.PlaythroughRepository) *ViewMapper {
 //
 //
 
-func (t *ViewMapper) MakeSnapshots(id model.PlaythroughId) map[string]*dto.GameView {
+func (t *Mapper) MakeSnapshots(id model.PlaythroughId) map[string]*dto.GameView {
 	playthrough, _ := t.repo.Get(id)
+
 	snapshots := make(map[string]*dto.GameView, len(playthrough.PlayersUuid))
 
 	for playerUuid := range playthrough.PlayersUuid {
 		player := playthrough.GetPlayer(playerUuid)
+		if player == nil {
+			continue
+		}
+
 		snapshots[playerUuid] = &dto.GameView{
 			Height: playthrough.Map.Height,
 			Width:  playthrough.Map.Width,
-			Grid:   t.constructGrid(playthrough.Map, playthrough.PlayersFoW[player.Id]),
-			State:  t.MapGameState(),
-			Player: t.constructPlayer(player),
+			Grid:   t.constructGrid(playthrough, playthrough.Map, playthrough.PlayersFoW[player.Id]),
+			State:  t.mapGameState(playthrough),
+			Player: t.constructPlayer(playthrough, player),
 			Events: t.convertEvents(playthrough.TurnEvents),
 		}
 	}
@@ -50,7 +55,7 @@ func (t *ViewMapper) MakeSnapshots(id model.PlaythroughId) map[string]*dto.GameV
 	return snapshots
 }
 
-func (t *ViewMapper) constructGrid(m *model.Map, fow *model.VisibleArea) [][]*dto.Cell {
+func (t *Mapper) constructGrid(playthrough *model.Playthrough, m *model.Map, fow *model.VisibleArea) [][]*dto.Cell {
 	rows := m.Height
 	cols := m.Width
 	world := make([][]*dto.Cell, rows)
@@ -58,25 +63,25 @@ func (t *ViewMapper) constructGrid(m *model.Map, fow *model.VisibleArea) [][]*dt
 	for r := 0; r < rows; r++ {
 		world[r] = make([]*dto.Cell, cols)
 		for c := 0; c < cols; c++ {
-			world[r][c] = t.constructCell(m, fow.Area[r][c], r, c)
+			world[r][c] = t.constructCell(playthrough, m, fow.Area[r][c], r, c)
 		}
 	}
 	return world
 }
 
-func (t *ViewMapper) constructCell(m *model.Map, visibility model.VisibilityState, r, c int) *dto.Cell {
+func (t *Mapper) constructCell(playthrough *model.Playthrough, m *model.Map, visibility model.VisibilityState, r, c int) *dto.Cell {
 	cellDTO := &dto.Cell{
-		VisibilityState: t.MapVisibilityState(visibility),
+		VisibilityState: t.mapVisibilityState(visibility),
 	}
 
 	if visibility == model.Visible || visibility == model.Explored {
 		tileType, _ := m.GetTileType(geometry.Point{X: c, Y: r})
-		cellDTO.TopologyType = t.MapTopologyType(tileType)
+		cellDTO.TopologyType = t.mapTopologyType(tileType)
 	}
 
 	if visibility == model.Visible {
-		cellDTO.Actor = t.ConstructActor(m, r, c)
-		cellDTO.Item = t.ConstructItem(m, r, c)
+		cellDTO.Actor = t.constructActor(playthrough, m, r, c)
+		cellDTO.Item = t.constructItem(playthrough, m, r, c)
 	}
 
 	return cellDTO
@@ -88,12 +93,12 @@ func (t *ViewMapper) constructCell(m *model.Map, visibility model.VisibilityStat
 //
 //
 
-func (t *ViewMapper) ConstructEffects(effects []*model.Effect) []*dto.Effect {
+func (t *Mapper) constructEffects(effects []*model.Effect) []*dto.Effect {
 	effectsDTO := make([]*dto.Effect, 0, len(effects))
 
 	for _, effect := range effects {
 		effectsDTO = append(effectsDTO, &dto.Effect{
-			Kind:         t.MapEffectType(effect.Kind),
+			Kind:         t.mapEffectType(effect.Kind),
 			Duration:     effect.Duration,
 			Charges:      effect.Charges,
 			VitalsChange: t.convertVitals(effect.VitalsChange),
@@ -113,22 +118,20 @@ func (t *ViewMapper) ConstructEffects(effects []*model.Effect) []*dto.Effect {
 //
 //
 
-func (t *ViewMapper) ConstructActor(m *model.Map, row, col int) *dto.Actor {
-	id := m.GetActorGrid()[row][col]
-	if id == 0 {
+func (t *Mapper) constructActor(playthrough *model.Playthrough, m *model.Map, row, col int) *dto.Actor {
+	actor := playthrough.GetActor(model.ActorId(m.GetActorGrid()[row][col]))
+	return t.mapActorToDTO(actor)
+}
+
+func (t *Mapper) mapActorToDTO(actor *model.Actor) *dto.Actor {
+	if actor == nil {
 		return nil
 	}
 
-	actor := t.Session.GetActor(model.ActorId(id))
-
-	return t.MapActorToDTO(actor)
-}
-
-func (t *ViewMapper) MapActorToDTO(actor *model.Actor) *dto.Actor {
 	effVitalsChange, effAttrsChange := actor.GetEffectsInfluence()
 
 	return &dto.Actor{
-		Kind:           t.MapActorType(actor.Kind),
+		Kind:           t.mapActorType(actor.Kind),
 		BaseVitals:     t.convertVitals(actor.Vitals),
 		BaseAttrs:      t.convertAttrs(actor.BaseAttrs),
 		VitalsChange:   t.convertVitalsChange(effVitalsChange),
@@ -136,7 +139,7 @@ func (t *ViewMapper) MapActorToDTO(actor *model.Actor) *dto.Actor {
 		Vitals:         t.formatActorVitals(actor.Vitals, effVitalsChange),
 		Attrs:          t.formatActorAttrs(actor.BaseAttrs, effAttrsChange),
 		Statuses:       t.formatStatuses(actor.Statuses),
-		AppliedEffects: t.ConstructEffects(actor.CollectActiveEffects()),
+		AppliedEffects: t.constructEffects(actor.CollectActiveEffects()),
 	}
 }
 
@@ -146,56 +149,56 @@ func (t *ViewMapper) MapActorToDTO(actor *model.Actor) *dto.Actor {
 //
 //
 
-func (t *ViewMapper) constructPlayer(actor *model.Actor) *dto.Player {
+func (t *Mapper) constructPlayer(playthrough *model.Playthrough, actor *model.Actor) *dto.Player {
 	if actor == nil {
 		return nil
 	}
 
 	return &dto.Player{
-		Actor:     t.MapActorToDTO(actor),
-		HUD:       t.constructHUD(actor),
+		Actor:     t.mapActorToDTO(actor),
+		HUD:       t.constructHUD(playthrough, actor),
 		Inventory: t.constructInventory(actor),
 		Equipped:  t.constructEquipped(actor),
-		RunStats:  t.constructRunStats(actor),
+		RunStats:  t.constructRunStats(playthrough, actor),
 	}
 }
 
-func (t *ViewMapper) constructHUD(a *model.Actor) *dto.HUD {
+func (t *Mapper) constructHUD(playthrough *model.Playthrough, a *model.Actor) *dto.HUD {
 	return &dto.HUD{
 		HP:       a.Vitals[model.VitalHP],
 		MaxHP:    a.DerivedAttrs[model.AttrMaxHP],
 		Strength: a.DerivedAttrs[model.AttrStrength],
-		Dungeon:  t.Session.Depth,
+		Dungeon:  playthrough.Depth,
 		Treasure: a.Backpack.TreasuresValue,
 	}
 }
 
-func (t *ViewMapper) constructInventory(a *model.Actor) map[dto.ItemType][]*dto.Item {
+func (t *Mapper) constructInventory(a *model.Actor) map[dto.ItemType][]*dto.Item {
 	inventory := make(map[dto.ItemType][]*dto.Item)
 
 	for _, slot := range a.Backpack.Slots {
 		for _, item := range slot {
-			itemDTO := t.MapItemType(item.Kind)
-			inventory[itemDTO] = append(inventory[itemDTO], t.ConvertItem(item))
+			itemDTO := t.mapItemType(item.Kind)
+			inventory[itemDTO] = append(inventory[itemDTO], t.convertItem(item))
 		}
 	}
 
 	return inventory
 }
 
-func (t *ViewMapper) constructEquipped(a *model.Actor) map[dto.ItemType]*dto.Item {
+func (t *Mapper) constructEquipped(a *model.Actor) map[dto.ItemType]*dto.Item {
 	equipped := make(map[dto.ItemType]*dto.Item)
 
 	for _, gear := range a.EquippedGear {
-		gearDTO := t.MapItemType(gear.Kind)
-		equipped[gearDTO] = t.ConvertItem(gear)
+		gearDTO := t.mapItemType(gear.Kind)
+		equipped[gearDTO] = t.convertItem(gear)
 	}
 
 	return equipped
 }
 
-func (t *ViewMapper) constructRunStats(a *model.Actor) *dto.RunStats {
-	stats, exists := t.Session.PlayersStats[a.Id]
+func (t *Mapper) constructRunStats(playthrough *model.Playthrough, a *model.Actor) *dto.RunStats {
+	stats, exists := playthrough.PlayersStats[a.Id]
 	if !exists {
 		return nil
 	}
@@ -219,28 +222,21 @@ func (t *ViewMapper) constructRunStats(a *model.Actor) *dto.RunStats {
 //
 //
 
-func (t *ViewMapper) ConstructItem(row, col int) *dto.Item {
-	id := t.Session.Map.ItemGrid[row][col]
-	if id == 0 {
-		return nil
-	}
-
-	item, exists := t.Session.Items[model.ItemId(id)]
-	if !exists {
-		t.Session.Map.RemoveItem(geometry.Point{X: col, Y: row})
-		log.Printf("[ERROR] Desync at %d,%d: item ID %d not found in Session", col, row, id)
-		return nil
-	}
-
-	return t.ConvertItem(item)
+func (t *Mapper) constructItem(playthrough *model.Playthrough, m *model.Map, row, col int) *dto.Item {
+	item, _ := playthrough.Items[model.ItemId(m.GetItemGrid()[row][col])]
+	return t.convertItem(item)
 }
 
-func (t *ViewMapper) ConvertItem(item *model.Item) *dto.Item {
+func (t *Mapper) convertItem(item *model.Item) *dto.Item {
+	if item == nil {
+		return nil
+	}
+
 	i := &dto.Item{
 		Id:           int(item.Id),
-		Kind:         t.MapItemType(item.Kind),
-		Label:        t.MapItemLabel(item.Label),
-		Keyhole:      t.MapItemKeyhole(item.Keyhole),
+		Kind:         t.mapItemType(item.Kind),
+		Label:        t.mapItemLabel(item.Label),
+		Keyhole:      t.mapItemKeyhole(item.Keyhole),
 		VitalsChange: t.convertVitals(item.VitalsChange),
 		AttrsChange:  t.convertAttrs(item.BaseAttrsChange),
 	}
@@ -258,7 +254,7 @@ func (t *ViewMapper) ConvertItem(item *model.Item) *dto.Item {
 //
 //
 
-func (t *ViewMapper) MapTopologyType(tile model.TileType) dto.TopologyType {
+func (t *Mapper) mapTopologyType(tile model.TileType) dto.TopologyType {
 	switch tile {
 	case model.Empty:
 		return dto.TopologyEmpty
@@ -281,19 +277,19 @@ func (t *ViewMapper) MapTopologyType(tile model.TileType) dto.TopologyType {
 	}
 }
 
-func (t *ViewMapper) MapActorType(actorType model.ActorType) dto.ActorKind {
+func (t *Mapper) mapActorType(actorType model.ActorType) dto.ActorKind {
 	return dto.ActorKind(actorType)
 }
 
-func (t *ViewMapper) MapItemType(itemType model.ItemType) dto.ItemType {
+func (t *Mapper) mapItemType(itemType model.ItemType) dto.ItemType {
 	return dto.ItemType(itemType)
 }
 
-func (t *ViewMapper) MapItemLabel(itemLabel model.ItemLabel) dto.ItemLabel {
+func (t *Mapper) mapItemLabel(itemLabel model.ItemLabel) dto.ItemLabel {
 	return dto.ItemLabel(itemLabel)
 }
 
-func (t *ViewMapper) MapItemKeyhole(itemKeyhole model.Keyhole) dto.Keyhole {
+func (t *Mapper) mapItemKeyhole(itemKeyhole model.Keyhole) dto.Keyhole {
 	switch itemKeyhole {
 	case model.KeyholeNone:
 		return dto.KeyholeNone
@@ -302,7 +298,7 @@ func (t *ViewMapper) MapItemKeyhole(itemKeyhole model.Keyhole) dto.Keyhole {
 	}
 }
 
-func (t *ViewMapper) MapVitalType(vital model.VitalType) dto.VitalType {
+func (t *Mapper) mapVitalType(vital model.VitalType) dto.VitalType {
 	switch vital {
 	case model.VitalHP:
 		return dto.VitalHP
@@ -314,7 +310,7 @@ func (t *ViewMapper) MapVitalType(vital model.VitalType) dto.VitalType {
 	}
 }
 
-func (t *ViewMapper) MapAttrType(attr model.AttrType) dto.AttrType {
+func (t *Mapper) mapAttrType(attr model.AttrType) dto.AttrType {
 	switch attr {
 	case model.AttrMaxHP:
 		return dto.MaxHealth
@@ -342,12 +338,12 @@ func (t *ViewMapper) MapAttrType(attr model.AttrType) dto.AttrType {
 	}
 }
 
-func (t *ViewMapper) MapEffectType(effectType model.EffectType) dto.EffectKind {
+func (t *Mapper) mapEffectType(effectType model.EffectType) dto.EffectKind {
 	return dto.EffectKind(effectType)
 }
 
-func (t *ViewMapper) MapGameState() dto.GameState {
-	switch t.Session.State {
+func (t *Mapper) mapGameState(playthrough *model.Playthrough) dto.GameState {
+	switch playthrough.State {
 	case model.LobbyGameState:
 		return dto.StateLobby
 	case model.PlayingGameState:
@@ -355,18 +351,18 @@ func (t *ViewMapper) MapGameState() dto.GameState {
 	case model.GameOverGameState:
 		return dto.StateGameover
 	default:
-		log.Printf("[WARNING] Unknown session state detected: %v\n", t.Session.State)
+		log.Printf("[WARNING] Unknown session state detected: %v\n", playthrough.State)
 		return dto.StateUnknown
 	}
 }
 
-func (t *ViewMapper) MapVisibilityState(vs service.VisibilityState) dto.VisibilityState {
+func (t *Mapper) mapVisibilityState(vs model.VisibilityState) dto.VisibilityState {
 	switch vs {
-	case service.Unexplored:
+	case model.Unexplored:
 		return dto.VisibilityUnexplored
-	case service.Visible:
+	case model.Visible:
 		return dto.VisibilityVisible
-	case service.Explored:
+	case model.Explored:
 		return dto.VisibilityExplored
 	default:
 		log.Printf("[WARNING] Unknown visibility state detected: %v\n", vs)
@@ -384,41 +380,45 @@ func (t *ViewMapper) MapVisibilityState(vs service.VisibilityState) dto.Visibili
 // -- DTO CONVERTERS --
 //
 
-func (t *ViewMapper) convertVitals(vitals map[model.VitalType]int) map[dto.VitalType]int {
+func (t *Mapper) convertVitals(vitals map[model.VitalType]int) map[dto.VitalType]int {
 	vitalsDTO := make(map[dto.VitalType]int, len(vitals))
 
 	for vital, val := range vitals {
-		vitalsDTO[t.MapVitalType(vital)] = val
+		vitalsDTO[t.mapVitalType(vital)] = val
 	}
 
 	return vitalsDTO
 }
 
-func (t *ViewMapper) convertAttrs(attrs map[model.AttrType]int) map[dto.AttrType]int {
+func (t *Mapper) convertAttrs(attrs map[model.AttrType]int) map[dto.AttrType]int {
 	attrsDTO := make(map[dto.AttrType]int, len(attrs))
 
 	for attr, val := range attrs {
-		attrsDTO[t.MapAttrType(attr)] = val
+		attrsDTO[t.mapAttrType(attr)] = val
 	}
 
 	return attrsDTO
 }
 
-func (t *ViewMapper) convertVitalsChange(vitalsChange map[model.VitalType][]int) map[dto.VitalType][]int {
+func (t *Mapper) convertVitalsChange(vitalsChange map[model.VitalType][]int) map[dto.VitalType][]int {
 	vitalsChangeDTO := make(map[dto.VitalType][]int, len(vitalsChange))
 
-	for vital := range vitalsChange {
-		vitalsChangeDTO[t.MapVitalType(vital)] = slices.Clone(vitalsChange[vital])
+	for vital, changes := range vitalsChange {
+		cloned := make([]int, len(changes))
+		copy(cloned, changes)
+		vitalsChangeDTO[t.mapVitalType(vital)] = cloned
 	}
 
 	return vitalsChangeDTO
 }
 
-func (t *ViewMapper) convertAttrsChange(attrsChange map[model.AttrType][]int) map[dto.AttrType][]int {
+func (t *Mapper) convertAttrsChange(attrsChange map[model.AttrType][]int) map[dto.AttrType][]int {
 	attrsChangeDTO := make(map[dto.AttrType][]int, len(attrsChange))
 
-	for attr := range attrsChange {
-		attrsChangeDTO[t.MapAttrType(attr)] = slices.Clone(attrsChange[attr])
+	for attr, changes := range attrsChange {
+		cloned := make([]int, len(changes))
+		copy(cloned, changes)
+		attrsChangeDTO[t.mapAttrType(attr)] = cloned
 	}
 
 	return attrsChangeDTO
@@ -428,7 +428,7 @@ func (t *ViewMapper) convertAttrsChange(attrsChange map[model.AttrType][]int) ma
 // -- STRING CONVERTERS --
 //
 
-func (t *ViewMapper) convertEvents(events []service.Event) []*dto.Event {
+func (t *Mapper) convertEvents(events []model.Event) []*dto.Event {
 	eventsDTO := make([]*dto.Event, 0, len(events))
 
 	for _, event := range events {
@@ -438,7 +438,7 @@ func (t *ViewMapper) convertEvents(events []service.Event) []*dto.Event {
 	return eventsDTO
 }
 
-func (t *ViewMapper) convertEvent(event service.Event) *dto.Event {
+func (t *Mapper) convertEvent(event model.Event) *dto.Event {
 	switch e := event.(type) {
 	case *service.AttackEvent:
 		return &dto.Event{
@@ -470,7 +470,7 @@ func (t *ViewMapper) convertEvent(event service.Event) *dto.Event {
 	}
 }
 
-func (t *ViewMapper) formatAttackEvent(event *service.AttackEvent) string {
+func (t *Mapper) formatAttackEvent(event *service.AttackEvent) string {
 	attacker := event.Attacker.Actor
 	defender := event.Defender.Actor
 
@@ -484,19 +484,60 @@ func (t *ViewMapper) formatAttackEvent(event *service.AttackEvent) string {
 	}
 }
 
-func (t *ViewMapper) formatMoveEvent(event *service.MoveEvent) string {
-	return ""
+func (t *Mapper) formatMoveEvent(event *service.MoveEvent) string {
+	mover := event.Mover.Actor
+
+	switch event.Outcome {
+	case service.MoveOutcomeSuccess:
+		return fmt.Sprintf("%v#%v moves to (%d,%d)", t.formatActorType(mover.Kind), mover.Id, mover.Pos.X, mover.Pos.Y)
+	case service.MoveOutcomeNoStamina:
+		return fmt.Sprintf("%v#%v is too exhausted to move", t.formatActorType(mover.Kind), mover.Id)
+	case service.MoveOutcomeCantMove:
+		return fmt.Sprintf("%v#%v cannot move there", t.formatActorType(mover.Kind), mover.Id)
+	case service.MoveOutcomeNoSpace:
+		return fmt.Sprintf("%v#%v has no space to move", t.formatActorType(mover.Kind), mover.Id)
+	default:
+		return ""
+	}
 }
 
-func (t *ViewMapper) formatItemPickupEvent(event *service.ItemPickupEvent) string {
-	return ""
+func (t *Mapper) formatItemPickupEvent(event *service.ItemPickupEvent) string {
+	actor := event.Actor.Actor
+
+	switch event.Outcome {
+	case service.PickupOutcomeSuccess:
+		if event.PickupItem == nil {
+			return fmt.Sprintf("%v#%v picks up something", t.formatActorType(actor.Kind), actor.Id)
+		}
+		return fmt.Sprintf("%v#%v picks up %s", t.formatActorType(actor.Kind), actor.Id, event.PickupItem.Label)
+	case service.PickupOutcomeBackpackNoFreeSpace:
+		return fmt.Sprintf("%v#%v cannot pick up item: backpack is full", t.formatActorType(actor.Kind), actor.Id)
+	default:
+		return ""
+	}
 }
 
-func (t *ViewMapper) formatItemUsageEvent(event *service.ItemUsageEvent) string {
-	return ""
+func (t *Mapper) formatItemUsageEvent(event *service.ItemUsageEvent) string {
+	user := event.User.Actor
+
+	switch event.Outcome {
+	case service.ItemUsageOutcomeSuccess:
+		if event.RetrievedItem != nil {
+			return fmt.Sprintf("%v#%v uses %s", t.formatActorType(user.Kind), user.Id, event.RetrievedItem.Label)
+		}
+		return fmt.Sprintf("%v#%v uses an item", t.formatActorType(user.Kind), user.Id)
+	case service.ItemUsageOutcomeNotFound:
+		return fmt.Sprintf("%v#%v tries to use an item but cannot find it", t.formatActorType(user.Kind), user.Id)
+	case service.ItemUsageOutcomeCantUnequip:
+		return fmt.Sprintf("%v#%v cannot unequip item", t.formatActorType(user.Kind), user.Id)
+	case service.ItemUsageOutcomeNoStamina:
+		return fmt.Sprintf("%v#%v is too exhausted to use item", t.formatActorType(user.Kind), user.Id)
+	default:
+		return ""
+	}
 }
 
-func (t *ViewMapper) formatActorType(actorType model.ActorType) string {
+func (t *Mapper) formatActorType(actorType model.ActorType) string {
 	switch actorType {
 	case model.ActorPlayer:
 		return "Player"
@@ -518,7 +559,7 @@ func (t *ViewMapper) formatActorType(actorType model.ActorType) string {
 	}
 }
 
-func (t *ViewMapper) formatActorVitals(baseVitals map[model.VitalType]int, vitalsChange map[model.VitalType][]int) map[string][]string {
+func (t *Mapper) formatActorVitals(baseVitals map[model.VitalType]int, vitalsChange map[model.VitalType][]int) map[string][]string {
 	stringVitals := make(map[string][]string, len(baseVitals))
 
 	baseVitalsKV := conv.MapToKV(baseVitals)
@@ -538,7 +579,7 @@ func (t *ViewMapper) formatActorVitals(baseVitals map[model.VitalType]int, vital
 	return stringVitals
 }
 
-func (t *ViewMapper) formatActorAttrs(baseAttrs map[model.AttrType]int, attrsChange map[model.AttrType][]int) map[string][]string {
+func (t *Mapper) formatActorAttrs(baseAttrs map[model.AttrType]int, attrsChange map[model.AttrType][]int) map[string][]string {
 	stringAttrs := make(map[string][]string, len(baseAttrs))
 
 	baseAttrsKV := conv.MapToKV(baseAttrs)
@@ -558,7 +599,7 @@ func (t *ViewMapper) formatActorAttrs(baseAttrs map[model.AttrType]int, attrsCha
 	return stringAttrs
 }
 
-func (t *ViewMapper) formatAttributes(attrsChange map[model.AttrType]int) []string {
+func (t *Mapper) formatAttributes(attrsChange map[model.AttrType]int) []string {
 	stringAttrs := make([]string, 0, len(attrsChange))
 
 	attrs := conv.MapToKV(attrsChange)
@@ -576,7 +617,7 @@ func (t *ViewMapper) formatAttributes(attrsChange map[model.AttrType]int) []stri
 	return stringAttrs
 }
 
-func (t *ViewMapper) formatStatuses(statusesChange map[model.StatusType]int) []string {
+func (t *Mapper) formatStatuses(statusesChange map[model.StatusType]int) []string {
 	var stringStatuses []string
 
 	for status, val := range statusesChange {
@@ -589,7 +630,7 @@ func (t *ViewMapper) formatStatuses(statusesChange map[model.StatusType]int) []s
 	return stringStatuses
 }
 
-func (t *ViewMapper) formatAttrType(attr model.AttrType) string {
+func (t *Mapper) formatAttrType(attr model.AttrType) string {
 	switch attr {
 	case model.AttrMaxHP:
 		return "Max HP"
@@ -617,7 +658,7 @@ func (t *ViewMapper) formatAttrType(attr model.AttrType) string {
 	}
 }
 
-func (t *ViewMapper) formatVitalType(vital model.VitalType) string {
+func (t *Mapper) formatVitalType(vital model.VitalType) string {
 	switch vital {
 	case model.VitalHP:
 		return "HP"
@@ -629,11 +670,11 @@ func (t *ViewMapper) formatVitalType(vital model.VitalType) string {
 	}
 }
 
-func (t *ViewMapper) formatEffectType(effectType model.EffectType) string {
+func (t *Mapper) formatEffectType(effectType model.EffectType) string {
 	return string(effectType)
 }
 
-func (t *ViewMapper) formatStatus(status model.StatusType) string {
+func (t *Mapper) formatStatus(status model.StatusType) string {
 	switch status {
 	case model.StatusSleep:
 		return "Sleep"

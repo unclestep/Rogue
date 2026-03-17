@@ -1,8 +1,9 @@
 package service
 
 import (
-	"github.com/unclestep/Rogue/internal/domain/model"
 	"math/rand"
+
+	"github.com/unclestep/Rogue/internal/domain/model"
 )
 
 type ImpactResolver struct{}
@@ -56,19 +57,15 @@ func (e *ImpactResolver) TickEffects(ctx model.SessionContext, a *model.Actor) {
 	}
 
 	e.ApplyImpact(impact, ctx.Rng())
-	a.RecomputeStats()
 
 	if a.Vitals[model.VitalHP] <= 0 {
 		ctx.Playthrough.KillActor(a)
 	}
-
 }
 
-// Apply - applies all changes and removes expired, ran out or marked as needed to remove effects.
+// ApplyImpact - applies all changes and removes expired, ran out or marked as needed to remove effects.
 func (e *ImpactResolver) ApplyImpact(impact *model.ActorImpact, rng *rand.Rand) {
 	actor := impact.Actor
-
-	// Remove effects before updating the stats to take into account TriggerOnExpire instructions
 
 	// Update effects charges and mark as needed to remove effects whose charges have run out
 	for effect, change := range impact.EffectChargesChange {
@@ -109,4 +106,6 @@ func (e *ImpactResolver) ApplyImpact(impact *model.ActorImpact, rng *rand.Rand) 
 	for _, effect := range impact.AppliedEffects {
 		actor.AddEffect(effect)
 	}
+
+	actor.RecomputeStats()
 }

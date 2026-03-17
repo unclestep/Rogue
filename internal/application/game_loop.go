@@ -1,27 +1,29 @@
 package application
 
 import (
+	"time"
+
 	"github.com/unclestep/Rogue/internal/application/usecase"
 	"github.com/unclestep/Rogue/internal/application/view"
+	"github.com/unclestep/Rogue/internal/domain/model"
 	"github.com/unclestep/Rogue/internal/dto"
-	"time"
 )
 
 type GameLoop struct {
 	subscribers  map[string]chan dto.GameView
 	notification chan dto.Command
 
-	activePlaythroughs map[int64]bool
+	activePlaythroughs map[model.PlaythroughId]bool
 
 	resolveState *usecase.ResolveState
-	viewMapper   *view.ViewMapper
+	viewMapper   *view.Mapper
 }
 
-func NewGameLoop(resolveState *usecase.ResolveState, viewMapper *view.ViewMapper) *GameLoop {
+func NewGameLoop(resolveState *usecase.ResolveState, viewMapper *view.Mapper) *GameLoop {
 	return &GameLoop{
 		subscribers:        make(map[string]chan dto.GameView),
 		notification:       make(chan dto.Command, 10000),
-		activePlaythroughs: make(map[int64]bool),
+		activePlaythroughs: make(map[model.PlaythroughId]bool),
 		resolveState:       resolveState,
 		viewMapper:         viewMapper,
 	}
@@ -44,33 +46,33 @@ func (g *GameLoop) Run() {
 	for {
 		select {
 		case cmd := <-g.notification:
-			g.activePlaythroughs[cmd.PlaythroughId] = true
+			g.activePlaythroughs[model.PlaythroughId(cmd.PlaythroughId)] = true
 			g.resolveState.Resolve(&cmd)
-			g.broadcastState(cmd.PlaythroughId)
+			g.broadcastState(model.PlaythroughId(cmd.PlaythroughId))
 		case <-ticker.C:
 			for playId := range g.activePlaythroughs {
 				tickCmd := &dto.Command{
-					PlaythroughId: playId,
+					PlaythroughId: int64(playId),
 					Action:        dto.ActionTick,
 				}
 				g.resolveState.Resolve(tickCmd)
+				g.broadcastState(playId)
 			}
-			g.broadcastState(playId)
 		}
 	}
 }
 
 func (g *GameLoop) broadcastState(playId model.PlaythroughId) {
-	playthroughView, playerIds := g.viewMapper.MakeSnapshots(playId)
+	snapshots := g.viewMapper.MakeSnapshots(playId)
 
-	for _, pid := range playerIds {
-		ch, exists := g.subscribers[pid]
+	for playerUuid, snapshot := range snapshots {
+		ch, exists := g.subscribers[playerUuid]
 		if !exists {
 			continue
 		}
 
 		select {
-		case ch <- playthroughView:
+		case ch <- *snapshot:
 		default:
 		}
 	}

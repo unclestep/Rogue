@@ -1,4 +1,4 @@
-package entity_test
+package model_test
 
 import (
 	"testing"
@@ -7,8 +7,6 @@ import (
 )
 
 func TestActorImpactGetEffectRespectsRemoval(t *testing.T) {
-	t.Parallel()
-
 	actor := &model.Actor{
 		Effects: make(map[model.EffectType]*model.Effect),
 	}
@@ -30,8 +28,6 @@ func TestActorImpactGetEffectRespectsRemoval(t *testing.T) {
 }
 
 func TestActorImpactGetStatusAggregation(t *testing.T) {
-	t.Parallel()
-
 	actor := &model.Actor{
 		Effects: map[model.EffectType]*model.Effect{
 			model.EffectSleep: {
@@ -61,8 +57,6 @@ func TestActorImpactGetStatusAggregation(t *testing.T) {
 }
 
 func TestActorImpactConsumeEffect(t *testing.T) {
-	t.Parallel()
-
 	eff := &model.Effect{Kind: model.EffectInfallible, Charges: 1}
 	impact := model.NewActorImpact(&model.Actor{})
 
@@ -77,8 +71,6 @@ func TestActorImpactConsumeEffect(t *testing.T) {
 }
 
 func TestActorImpactRemoveEffectsFromGear(t *testing.T) {
-	t.Parallel()
-
 	gearEff := &model.Effect{Kind: model.EffectWeaponDefault}
 	weapon := &model.Item{
 		Kind:    model.ItemTypeWeapon,
@@ -93,7 +85,6 @@ func TestActorImpactRemoveEffectsFromGear(t *testing.T) {
 	impact := model.NewActorImpact(actor)
 	impact.EffectsToRemove[gearEff] = true
 
-	// Проверяем, что RemoveEffects находит эффект внутри оружия и удаляет его оттуда
 	removed := impact.RemoveEffects()
 	if !removed {
 		t.Errorf("expected RemoveEffects to return true")
@@ -105,8 +96,6 @@ func TestActorImpactRemoveEffectsFromGear(t *testing.T) {
 }
 
 func TestActorImpactCollectActorReactions(t *testing.T) {
-	t.Parallel()
-
 	trigger := model.TriggerOnHit
 	reaction := &model.Reaction{Trigger: trigger}
 
@@ -145,8 +134,6 @@ func TestActorImpactCollectActorReactions(t *testing.T) {
 // TestDeepNestedClone tests recursive deep copying of effects within reactions.
 // This is a "sophisticated" case where an effect triggers a reaction that applies another effect.
 func TestDeepNestedClone(t *testing.T) {
-	t.Parallel()
-
 	// Level 3: The most nested effect
 	innerEffect := &model.Effect{
 		Kind:     model.EffectInfallible,
@@ -188,8 +175,6 @@ func TestDeepNestedClone(t *testing.T) {
 // TestImpactRobustnessWithNilFields tests how ActorImpact handles partially initialized Actors.
 // This simulates "impossible" states if an Actor is created bypassing constructors.
 func TestImpactRobustnessWithNilFields(t *testing.T) {
-	t.Parallel()
-
 	// Actor with nil maps (danger zone for panics)
 	brokenActor := &model.Actor{
 		Id:           666,
@@ -216,8 +201,6 @@ func TestImpactRobustnessWithNilFields(t *testing.T) {
 
 // TestChangeCalc_ExtremeScaling tests very high scale values and mixed holders.
 func TestChangeCalcExtremeScaling(t *testing.T) {
-	t.Parallel()
-
 	source := &model.Actor{
 		DerivedAttrs: map[model.AttrType]int{model.AttrStrength: 1_000_000}, // Extreme value
 	}
@@ -256,8 +239,6 @@ func TestChangeCalcExtremeScaling(t *testing.T) {
 
 // TestStatusConflictAndRemoval tests what happens when multiple sources provide the same status.
 func TestStatusConflictAndRemoval(t *testing.T) {
-	t.Parallel()
-
 	actor := &model.Actor{
 		Effects: make(map[model.EffectType]*model.Effect),
 	}
@@ -299,8 +280,6 @@ func TestStatusConflictAndRemoval(t *testing.T) {
 
 // TestMassEffectRemovalCollision tests removing the same effect multiple times in one tick.
 func TestMassEffectRemovalCollision(t *testing.T) {
-	t.Parallel()
-
 	eff := &model.Effect{Kind: model.EffectFatigue}
 	actor := &model.Actor{
 		Effects: map[model.EffectType]*model.Effect{model.EffectFatigue: eff},

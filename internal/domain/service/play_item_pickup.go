@@ -25,9 +25,9 @@ func NewPickupService() *Pickup {
 //
 
 type ItemPickupEvent struct {
-	Actor        *model.ActorImpact
-	PickupedItem *model.Item
-	Outcome      PickupOutcome
+	Actor      *model.ActorImpact
+	PickupItem *model.Item
+	Outcome    PickupOutcome
 }
 
 type PickupOutcome int
@@ -43,7 +43,7 @@ func NewItemPickupEvent(actor *model.Actor) *ItemPickupEvent {
 	}
 }
 
-func (p *Pickup) Pickup(playthrough *model.Playthrough, actor *model.Actor, item *model.Item) *ItemPickupEvent {
+func (p *Pickup) Pickup(actor *model.Actor, item *model.Item) *ItemPickupEvent {
 	if actor == nil || item == nil {
 		return nil
 	}
@@ -55,15 +55,15 @@ func (p *Pickup) Pickup(playthrough *model.Playthrough, actor *model.Actor, item
 		return event
 	}
 
-	event.PickupedItem = item
+	event.PickupItem = item
 	return event
 }
 
 func (event *ItemPickupEvent) Perform(ctx *model.SessionContext) {
-	if event.Actor == nil || event.PickupedItem == nil {
+	if event.Actor == nil || event.PickupItem == nil {
 		return
 	}
 
-	ctx.Playthrough.RemoveItem(event.PickupedItem)
-	event.Actor.Actor.Backpack.Add(event.PickupedItem)
+	ctx.Playthrough.RemoveItem(event.PickupItem)
+	event.Actor.Actor.Backpack.Add(event.PickupItem)
 }

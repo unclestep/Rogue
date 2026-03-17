@@ -1,14 +1,15 @@
 package service
 
 import (
-	"github.com/unclestep/Rogue/internal/domain/model"
-	"github.com/unclestep/Rogue/pkg/algorithm"
-	"github.com/unclestep/Rogue/pkg/geometry"
-	"github.com/unclestep/Rogue/pkg/utils"
 	"log"
 	"math"
 	"math/rand"
 	"slices"
+
+	"github.com/unclestep/Rogue/internal/domain/model"
+	"github.com/unclestep/Rogue/pkg/algorithm"
+	"github.com/unclestep/Rogue/pkg/geometry"
+	"github.com/unclestep/Rogue/pkg/utils"
 )
 
 type TopologyGenerator struct{}
@@ -28,22 +29,17 @@ type sector struct {
 	xMin, yMin, xMax, yMax int
 }
 
-func (t *TopologyGenerator) Gen(ctx *model.SessionContext, mapWidth, mapHeight, roomCountHorizontal, roomCountVertical int) *model.Map {
+func (t *TopologyGenerator) Gen(ctx *model.SessionContext, mapWidth, mapHeight, roomCountHorizontal, roomCountVertical int) {
 	if !t.canFitGrid(mapWidth, mapHeight, roomCountHorizontal, roomCountVertical) {
-		return nil
+		return
 	}
 
-	blueprint := &model.MapBlueprint{
-		Width:  mapWidth,
-		Height: mapHeight,
-	}
-
+	blueprint := model.NewMapBlueprint(mapWidth, mapHeight)
 	sectors := t.sectorize(mapWidth, mapHeight, roomCountHorizontal, roomCountVertical, ctx.Rng())
 	t.createRooms(blueprint, sectors, ctx.Rng())
 	t.createEntranceAndExit(blueprint, ctx.Rng())
 	t.connectRooms(blueprint)
-
-	return model.NewMapFromBlueprint(blueprint)
+	ctx.Playthrough.Map = model.NewMapFromBlueprint(blueprint)
 }
 
 // canFitGrid - checks the possibility to generate given number of rooms horizontally and vertically.
@@ -66,7 +62,7 @@ func (t *TopologyGenerator) canFitGrid(mapWidth, mapHeight, roomCountHorizontal,
 // Function a grid of sector such that each sector has different sizes.
 // gridWidth - number of rooms horizontally, gridHeight - number of rooms vertically.
 // Returns matrix of sectors.
-func (t *TopologyGenerator) sectorize(gridWidth, gridHeight, mapWidth, mapHeight int, rng *rand.Rand) [][]sector {
+func (t *TopologyGenerator) sectorize(mapWidth, mapHeight, gridWidth, gridHeight int, rng *rand.Rand) [][]sector {
 	sectors := utils.CreateMatrix[sector](gridHeight, gridWidth)
 	sectorWidth, sectorWidthRem := mapWidth/gridWidth, mapWidth%gridWidth
 	sectorHeight, sectorHeightRem := mapHeight/gridHeight, mapHeight%gridHeight
@@ -162,13 +158,13 @@ func (t *TopologyGenerator) createRooms(blueprint *model.MapBlueprint, sectors [
 
 		for y := wallYMin; y <= wallYMax; y++ {
 			for x := wallXMin; x <= wallXMax; x++ {
-				tile := blueprint.TileGrid[y][x]
-				tile.RoomId = room.Id
+				tile := &blueprint.TileGrid[y][x]
 
 				if y == wallYMin || y == wallYMax || x == wallXMin || x == wallXMax {
 					tile.Type = model.Wall
 				} else {
 					tile.Type = model.Floor
+					tile.RoomId = room.Id
 				}
 			}
 		}
@@ -231,8 +227,7 @@ func (t *TopologyGenerator) connectRooms(blueprint *model.MapBlueprint) {
 				tile.Type = model.Corridor
 			case model.Wall:
 				tile.Type = model.OpenDoor
-				door := &model.DoorMetadata{Pos: p}
-				blueprint.Doors[p] = door
+				blueprint.Doors[geometry.Point{X: x, Y: y}] = &model.DoorMetadata{Pos: p}
 			default:
 			}
 		}
@@ -272,7 +267,7 @@ func (b *blueprintGraph) getDiggingCost(p geometry.Point) float64 {
 	case model.Floor, model.OpenDoor:
 		cost = 3.0
 	case model.Wall:
-		cost = 5.0
+		cost = 50.0
 	default:
 		return 1.0
 	}

@@ -109,10 +109,11 @@ func (m *Movement) ExecuteMove(ctx *model.SessionContext, mover *model.Actor, ve
 	event.Mover.PosChange = vector
 	event.Mover.VitalsChange[model.VitalStamina] -= mover.DerivedAttrs[model.AttrMoveStaminaCost]
 	events := []model.Event{event}
+	m.impactResolver.ResolveReactions(model.TriggerOnMove, event.Mover, nil, ctx.Rng())
 
 	if itemId, _ := ctx.Playthrough.Map.GetItemID(target); itemId > 0 && mover.Kind == model.ActorPlayer {
 		item := ctx.Playthrough.GetItem(model.ItemId(itemId))
-		pickupEvent := m.pickupService.Pickup(ctx.Playthrough, mover, item)
+		pickupEvent := m.pickupService.Pickup(mover, item)
 		events = append(events, pickupEvent)
 	}
 

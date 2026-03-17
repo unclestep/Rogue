@@ -1,10 +1,11 @@
 package usecase
 
 import (
+	"maps"
+
 	"github.com/unclestep/Rogue/internal/application/port"
 	"github.com/unclestep/Rogue/internal/domain/model"
 	"github.com/unclestep/Rogue/internal/domain/service"
-	"maps"
 )
 
 type ResolveTurn struct {
@@ -25,9 +26,9 @@ type services struct {
 	monsterCtrl  *service.MonsterController
 }
 
-func NewServices(rules *model.GameRules) *services {
+func newServices(rules *model.GameRules) *services {
 	services := &services{
-		generator:    service.NewDungeonGeneratorService(rules),
+		generator:    service.NewDungeonGeneratorService(rules, service.NewTopologyGenerator(), service.NewObjectSpawner(rules), service.NewDoorLocker()),
 		impactRes:    service.NewImpactResolverService(),
 		pickup:       service.NewPickupService(),
 		interactor:   service.NewInteractorService(),
@@ -60,7 +61,7 @@ func (uc *ResolveTurn) Execute(playId model.PlaythroughId) model.GameState {
 	rules, _ := uc.rulesRepo.Get(playthrough.RulesId)
 	ctx := model.NewSessionContext(playthrough)
 
-	services := NewServices(rules)
+	services := newServices(rules)
 	newState := model.PlayingGameState
 
 	// Process turn
@@ -128,6 +129,8 @@ func (uc *ResolveTurn) processIntent(ctx *model.SessionContext, services *servic
 		user := ctx.Playthrough.GetActor(intent.Actor)
 		item := ctx.Playthrough.GetItem(intent.ItemId)
 		events = append(events, services.itemUsage.UnequipItem(item, user))
+	default:
+		panic("unhandled default case")
 	}
 
 	for _, event := range events {
