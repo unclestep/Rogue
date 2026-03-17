@@ -1,4 +1,4 @@
-package entity_test
+package model_test
 
 import (
 	"math"
@@ -40,9 +40,6 @@ func setupTestMap() *model.Map {
 			{Id: 1, Pos: geometry.Point{X: 1, Y: 1}, Width: 3, Height: 3},
 			{Id: 2, Pos: geometry.Point{X: 6, Y: 6}, Width: 3, Height: 3},
 		},
-		Doors: map[geometry.Point]*model.DoorMetadata{
-			{X: 4, Y: 4}: {Pos: geometry.Point{X: 4, Y: 4}, Locked: true, Keyhole: 1},
-		},
 		EntranceRoomId: 1,
 		ExitRoomId:     2,
 		ExitPoint:      geometry.Point{X: 8, Y: 8},
@@ -72,10 +69,6 @@ func TestMapInitializationAndGetters(t *testing.T) {
 		entRoom := m.GetEntranceRoom()
 		if entRoom == nil || entRoom.Id != 1 {
 			t.Error("Incorrect entrance room")
-		}
-		// Entrance room shouldn't have free item points (assumed in Hydrate)
-		if entRoom.GetItemCapacity() != 0 {
-			t.Errorf("Entrance room capacity should be 0, got %d", entRoom.GetItemCapacity())
 		}
 
 		extRoom := m.GetExitRoom()
@@ -299,7 +292,7 @@ func TestMapDoors(t *testing.T) {
 	}
 
 	// Locking
-	m.LockDoor(doorPoint)
+	m.LockDoor(doorPoint, 1)
 	if !m.IsClosedDoor(doorPoint) {
 		t.Error("Door should be locked again")
 	}

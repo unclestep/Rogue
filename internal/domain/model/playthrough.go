@@ -2,6 +2,8 @@ package model
 
 import (
 	"time"
+
+	"github.com/unclestep/Rogue/pkg/geometry"
 )
 
 type Playthrough struct {
@@ -76,6 +78,7 @@ func NewPlaythrough(playId PlaythroughId, rulesId RulesId, seed int64) *Playthro
 	gs := &Playthrough{
 		PlaythroughId:       playId,
 		RulesId:             rulesId,
+		Map:                 nil,
 		PlayersUuid:         make(map[string]ActorId),
 		Players:             make(map[ActorId]*Actor),
 		PlayersStats:        make(map[ActorId]*GameStats),
@@ -85,8 +88,13 @@ func NewPlaythrough(playId PlaythroughId, rulesId RulesId, seed int64) *Playthro
 		DeadMonsters:        make(map[ActorId]*Actor),
 		Items:               make(map[ItemId]*Item),
 		Depth:               0,
+		State:               LobbyGameState,
+		DungParams:          nil,
+		DynamicDifficulty:   1,
 		NextId:              1,
 		PendingIntents:      make(map[ActorId]*Intent),
+		TurnEvents:          make([]Event, 0),
+		TurnDeadline:        time.Time{},
 		Seed:                seed,
 	}
 	return gs
@@ -256,6 +264,21 @@ func (gs *Playthrough) AreAllAlivePlayersEscaped() bool {
 	return escaped+dead == len(gs.Players)
 }
 
+func (gs *Playthrough) GetKey(p geometry.Point) (*Item, bool) {
+	id, _ := gs.Map.GetItemID(p)
+
+	if id == 0 {
+		return nil, false
+	}
+
+	item, exists := gs.Items[ItemId(id)]
+	if !exists || item.Keyhole == 0 {
+		return nil, false
+	}
+
+	return item, true
+}
+
 //
 //
 // --- SETTERS ---
@@ -295,8 +318,8 @@ func (gs *Playthrough) RemoveItem(item *Item) {
 		return
 	}
 
-	item.Pos = NewInvalidPoint()
 	gs.Map.RemoveItem(item.Pos)
+	item.Pos = NewInvalidPoint()
 }
 
 func (gs *Playthrough) KillActor(actor *Actor) {
@@ -305,7 +328,7 @@ func (gs *Playthrough) KillActor(actor *Actor) {
 	}
 
 	if gs.IsMonster(actor.Id) {
-		actor.Pos = NewInvalidPoint()
+		// NOTE: POSITION STAYS VALID FOR SPAWN TREASURES
 		gs.Map.RemoveActor(actor.Pos)
 		gs.DeadMonsters[actor.Id] = actor
 		delete(gs.Monsters, actor.Id)

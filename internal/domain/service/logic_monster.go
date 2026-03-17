@@ -22,9 +22,9 @@ func NewMonsterControllerService(pathfinder *Pathfinder, moveResolver *MoveResol
 	return ctrl
 }
 
-func (c *MonsterController) RegisterBehaviors(pathfinder *Pathfinder) {
-	c.behaviors[model.BehaviorWander] = NewWanderBehavior(pathfinder)
-	c.behaviors[model.BehaviorChase] = NewChaseBehavior(pathfinder)
+func (m *MonsterController) RegisterBehaviors(pathfinder *Pathfinder) {
+	m.behaviors[model.BehaviorWander] = NewWanderBehavior(pathfinder)
+	m.behaviors[model.BehaviorChase] = NewChaseBehavior(pathfinder)
 }
 
 type MonsterBehavior interface {
@@ -65,7 +65,7 @@ func (m *MonsterController) Tick(ctx *model.SessionContext) map[model.ActorId]*m
 			nextState, decision := m.behaviors[initState].Update(ctx, monster)
 
 			if decision != nil {
-				intent := m.moveResolver.Resolve(ctx, monster, decision.MoveVector)
+				intent := m.moveResolver.Resolve(ctx.Playthrough, monster, decision.MoveVector)
 				intents[monster.Id] = intent
 			}
 
@@ -76,7 +76,6 @@ func (m *MonsterController) Tick(ctx *model.SessionContext) map[model.ActorId]*m
 	}
 
 	return intents
-
 }
 
 type WanderBehavior struct {
@@ -88,7 +87,7 @@ func NewWanderBehavior(pathfinder *Pathfinder) *WanderBehavior {
 	return &WanderBehavior{
 		pathfinder: pathfinder,
 		transitions: []*Transition{
-			&Transition{
+			{
 				Condition: func(ctx *model.SessionContext, m *model.Actor) bool {
 					for _, p := range ctx.Playthrough.Players {
 						dist := m.Pos.EuclideanDistance(p.Pos)
@@ -105,7 +104,6 @@ func NewWanderBehavior(pathfinder *Pathfinder) *WanderBehavior {
 }
 
 func (wander *WanderBehavior) Update(ctx *model.SessionContext, monster *model.Actor) (model.BehaviorType, *MonsterDecision) {
-
 	for _, transition := range wander.transitions {
 		if transition.Condition(ctx, monster) {
 			return transition.TargetState, nil
@@ -127,7 +125,7 @@ func NewChaseBehavior(pathfinder *Pathfinder) *ChaseBehavior {
 	return &ChaseBehavior{
 		pathfinder: pathfinder,
 		transitions: []*Transition{
-			&Transition{
+			{
 				Condition: func(ctx *model.SessionContext, m *model.Actor) bool {
 					for _, p := range ctx.Playthrough.Players {
 						dist := m.Pos.EuclideanDistance(p.Pos)
@@ -144,7 +142,6 @@ func NewChaseBehavior(pathfinder *Pathfinder) *ChaseBehavior {
 }
 
 func (chase *ChaseBehavior) Update(ctx *model.SessionContext, monster *model.Actor) (model.BehaviorType, *MonsterDecision) {
-
 	for _, transition := range chase.transitions {
 		if transition.Condition(ctx, monster) {
 			return transition.TargetState, nil

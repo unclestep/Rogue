@@ -21,6 +21,9 @@ func NewSubmitIntent(repo port.PlaythroughRepository) *SubmitIntent {
 func (s *SubmitIntent) Submit(id model.PlaythroughId, cmd *dto.Command) {
 	play, _ := s.repo.Get(id)
 	player := play.GetPlayer(cmd.PlayerUUID)
+	if player == nil {
+		return
+	}
 
 	switch cmd.Action {
 	case dto.ActionMove:
@@ -48,6 +51,8 @@ func (s *SubmitIntent) Submit(id model.PlaythroughId, cmd *dto.Command) {
 			Actor:      player.Id,
 			ItemId:     model.ItemId(cmd.ItemID),
 		}
+	default:
+		panic("unhandled default case")
 	}
 
 	s.repo.Save(play)

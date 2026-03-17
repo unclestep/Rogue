@@ -1,7 +1,6 @@
 package service
 
 import (
-	"log"
 	"math/rand"
 
 	"github.com/unclestep/Rogue/internal/domain/model"
@@ -25,14 +24,14 @@ const (
 	// PrimaryPoolMultiplier - determines the initial fraction of room capacity used for spawning.
 	// This helps distribute objects more evenly across the map before filling rooms to capacity.
 	PrimaryPoolMultiplier = 0.5
-	PlaceForLootSearchRad = 1
+	PlaceForLootSearchRad = -1
 )
 
 func (o *ObjectSpawner) SpawnTreasure(ctx *model.SessionContext, deadActor *model.Actor) {
 	itemPos, ok := ctx.Playthrough.Map.FindEmptyPoint(deadActor.Pos, PlaceForLootSearchRad)
 	if ok {
-		coef := ctx.Playthrough.DungParams.TreasureValueMultiplier
-		value := o.calcTreasureValue(deadActor, coef)
+		multiplier := ctx.Playthrough.DungParams.TreasureValueMultiplier
+		value := o.calcTreasureValue(deadActor, multiplier)
 		id := ctx.Playthrough.GetId()
 
 		treasure := model.NewTreasureItem(model.ItemId(id), itemPos, value)
@@ -109,7 +108,6 @@ func (o *ObjectSpawner) generateObjects(ctx *model.SessionContext, n int,
 	createObj func(geometry.Point, *rand.Rand),
 ) {
 	if n <= 0 {
-		log.Printf("[INFO] No objects generated: n=%v\n", n)
 		return
 	}
 
@@ -183,10 +181,6 @@ func (o *ObjectSpawner) generateObjects(ctx *model.SessionContext, n int,
 	// Phase 2: Fill remaining requested objects using the reserve pool
 	for len(availableRoomsRes) > 0 && spawned < n {
 		spawn(&resRoomList, availableRoomsRes)
-	}
-
-	if spawned < n {
-		log.Printf("[INFO] Could only spawn %d/%d objects: map is full", spawned, n)
 	}
 }
 

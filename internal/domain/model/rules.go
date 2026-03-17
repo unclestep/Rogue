@@ -67,6 +67,7 @@ func (d *DifficultyCurve) At(curDepth, totalDepth int, dynamicDifficulty float64
 	cur.MonsterWeights = interpolateWeights(start.MonsterWeights, end.MonsterWeights, progress)
 	cur.ItemWeights = interpolateWeights(start.ItemWeights, end.ItemWeights, progress)
 
+	cur.LockedDoorsStartDepth = start.LockedDoorsStartDepth
 	if curDepth >= start.LockedDoorsStartDepth {
 		cur.MinLockedDoors = int(float64(interpolate(start.MinLockedDoors, end.MinLockedDoors, progress)) * dynamicDifficulty)
 		cur.MaxLockedDoors = int(float64(interpolate(start.MaxLockedDoors, end.MaxLockedDoors, progress)) * dynamicDifficulty)
