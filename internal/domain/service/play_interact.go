@@ -51,7 +51,7 @@ func (i *Interactor) Execute(ctx *model.SessionContext, actor *model.Actor, targ
 		keySlot := actor.Backpack.GetSlot(model.ItemTypeKey)
 		for _, key := range keySlot {
 			doorKeyhole, ok := m.GetDoorKeyhole(target)
-			if ok && doorKeyhole == key.Keyhole {
+			if ok && doorKeyhole == key.Keyhole || key.Keyhole == model.MasterKeyhole {
 				event.Outcome = InteractionEventOutcomeSuccess
 				event.DoorToOpen = target
 				break

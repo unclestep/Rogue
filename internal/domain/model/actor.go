@@ -64,7 +64,6 @@ const (
 //
 //
 
-//go:generate enumer -type=AttackPatternType -json -text -transform=snake_case
 type AttackPatternType int
 
 const (
@@ -77,7 +76,6 @@ const (
 //
 //
 
-//go:generate enumer -type=MovePatternType -json -text -transform=snake_case
 type MovePatternType int
 
 const (
@@ -92,7 +90,6 @@ const (
 //
 //
 
-//go:generate enumer -type=VitalType -json -text -transform=snake_case
 type VitalType int
 
 const (
@@ -114,7 +111,6 @@ func NewVitals(hp, stamina int) map[VitalType]int {
 //
 //
 
-//go:generate enumer -type=AttrType -json -text -transform=snake_case
 type AttrType int
 
 const (
@@ -229,8 +225,7 @@ const (
 type BehaviorType int
 
 const (
-	BehaviorIdle BehaviorType = iota
-	BehaviorWander
+	BehaviorWander BehaviorType = iota
 	BehaviorChase
 )
 

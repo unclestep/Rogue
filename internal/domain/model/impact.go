@@ -88,6 +88,46 @@ func (impact *ActorImpact) ConsumeEffect(effect *Effect) {
 	}
 }
 
+// RemoveEffects - removes all effects which were marked as needed to remove.
+// These effects do not necessarily expire or run out.
+// NOTE: Need to manually recompute actor's stats after this.
+func (impact *ActorImpact) RemoveEffects() {
+	for effect := range impact.EffectsToRemove {
+		effectOrigins := impact.whereEffectFrom(effect)
+		for _, origin := range effectOrigins {
+			impact.removeEffect(origin, effect)
+		}
+	}
+	clear(impact.EffectsToRemove)
+}
+
+// whereEffectFrom - finds effect's origin.
+// Very likely it is straight from actor's active effects, but it also could be from actor's equipped gear.
+func (impact *ActorImpact) whereEffectFrom(effect *Effect) []map[EffectType]*Effect {
+	origins := make([]map[EffectType]*Effect, 0) // If the same effect (in terms of pointers) is in multiple origins (rare case)
+	if eff, exists := impact.Actor.Effects[effect.Kind]; exists {
+		if eff == effect {
+			origins = append(origins, impact.Actor.Effects)
+		}
+	}
+
+	for _, gear := range impact.Actor.EquippedGear {
+		if eff, exists := gear.Effects[effect.Kind]; exists {
+			if eff == effect {
+				origins = append(origins, gear.Effects)
+			}
+		}
+	}
+
+	if appliedEffect, exists := impact.AppliedEffects[effect.Kind]; exists {
+		if appliedEffect == effect {
+			origins = append(origins, impact.AppliedEffects)
+		}
+	}
+
+	return origins
+}
+
 // removeEffect - removes effect from its origin.
 // NOTE: Need to manually recompute actor's stats after this.
 func (impact *ActorImpact) removeEffect(origin map[EffectType]*Effect, effect *Effect) bool {
@@ -102,41 +142,6 @@ func (impact *ActorImpact) removeEffect(origin map[EffectType]*Effect, effect *E
 		removed = true
 	}
 	return removed
-}
-
-// RemoveEffects - removes all effects which were marked as needed to remove.
-// These effects do not necessarily expire or run out.
-// NOTE: Need to manually recompute actor's stats after this.
-func (impact *ActorImpact) RemoveEffects() bool {
-	removed := false
-
-	for effect := range impact.EffectsToRemove {
-		effectOrigin := impact.whereEffectFrom(effect)
-		removed = impact.removeEffect(effectOrigin, effect)
-	}
-	clear(impact.EffectsToRemove)
-
-	return removed
-}
-
-// whereEffectFrom - finds effect's origin.
-// Very likely it is straight from actor's active effects, but it also could be from actor's equipped gear.
-func (impact *ActorImpact) whereEffectFrom(effect *Effect) map[EffectType]*Effect {
-	if eff, exists := impact.Actor.Effects[effect.Kind]; exists {
-		if eff == effect {
-			return impact.Actor.Effects
-		}
-	}
-
-	for _, gear := range impact.Actor.EquippedGear {
-		if eff, exists := gear.Effects[effect.Kind]; exists {
-			if eff == effect {
-				return gear.Effects
-			}
-		}
-	}
-
-	return nil
 }
 
 //
@@ -170,7 +175,6 @@ func (impact *ActorImpact) CollectActorReactions(trigger TriggerType) []*Reactio
 	}
 
 	return reactions
-
 }
 
 func (impact *ActorImpact) DecrementAllRelatedCharges(trigger TriggerType) {
@@ -187,7 +191,7 @@ func (impact *ActorImpact) DecrementEffectsCharges(trigger TriggerType, effects 
 			continue
 		}
 
-		if effect.ConsumeOn == trigger && effect.Charges != -1 {
+		if effect.ConsumeOn == trigger && effect.Charges > 0 {
 			impact.EffectChargesChange[effect] -= 1
 			if effect.Charges+impact.EffectChargesChange[effect] == 0 {
 				impact.EffectsToRemove[effect] = true

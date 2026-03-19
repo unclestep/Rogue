@@ -72,6 +72,7 @@ func TestActorImpactConsumeEffect(t *testing.T) {
 
 func TestActorImpactRemoveEffectsFromGear(t *testing.T) {
 	gearEff := &model.Effect{Kind: model.EffectWeaponDefault}
+	actorEff := &model.Effect{Kind: model.EffectUntouchable}
 	weapon := &model.Item{
 		Kind:    model.ItemTypeWeapon,
 		Effects: map[model.EffectType]*model.Effect{model.EffectWeaponDefault: gearEff},
@@ -79,19 +80,20 @@ func TestActorImpactRemoveEffectsFromGear(t *testing.T) {
 
 	actor := &model.Actor{
 		EquippedGear: map[model.ItemType]*model.Item{model.ItemTypeWeapon: weapon},
-		Effects:      make(map[model.EffectType]*model.Effect),
+		Effects:      map[model.EffectType]*model.Effect{model.EffectUntouchable: actorEff},
 	}
 
 	impact := model.NewActorImpact(actor)
 	impact.EffectsToRemove[gearEff] = true
 
-	removed := impact.RemoveEffects()
-	if !removed {
-		t.Errorf("expected RemoveEffects to return true")
-	}
+	impact.RemoveEffects()
 
 	if _, exists := weapon.Effects[model.EffectWeaponDefault]; exists {
-		t.Errorf("effect was not removed from gear")
+		t.Errorf("Effect was not removed from gear")
+	}
+
+	if _, exists := actor.Effects[model.EffectUntouchable]; !exists {
+		t.Errorf("Effect was removed from actor but should not")
 	}
 }
 
@@ -285,19 +287,13 @@ func TestMassEffectRemovalCollision(t *testing.T) {
 		Effects: map[model.EffectType]*model.Effect{model.EffectFatigue: eff},
 	}
 	impact := model.NewActorImpact(actor)
-
-	// Mark for removal 3 times
-	impact.EffectsToRemove[eff] = true
 	impact.EffectsToRemove[eff] = true
 
 	// Add to applied effects and mark for removal there too
 	impact.AppliedEffects[model.EffectFatigue] = eff
 
 	// Run removal
-	removed := impact.RemoveEffects()
-	if !removed {
-		t.Errorf("RemoveEffects failed to report successful removal")
-	}
+	impact.RemoveEffects()
 
 	if len(actor.Effects) != 0 || len(impact.AppliedEffects) != 0 {
 		t.Errorf("Effect was not fully purged from all sources")

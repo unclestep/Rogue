@@ -345,8 +345,8 @@ func (gs *Playthrough) RemoveActor(actor *Actor) {
 		return
 	}
 
-	actor.Pos = NewInvalidPoint()
 	gs.Map.RemoveActor(actor.Pos)
+	actor.Pos = NewInvalidPoint()
 	delete(gs.Monsters, actor.Id)
 	delete(gs.Players, actor.Id)
 }

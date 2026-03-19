@@ -4,6 +4,7 @@ import (
 	"maps"
 
 	"github.com/unclestep/Rogue/internal/domain/model"
+	"github.com/unclestep/Rogue/pkg/geometry"
 )
 
 type ItemUsage struct{}
@@ -19,6 +20,7 @@ type ItemUsageEvent struct {
 	ItemToEquip   *model.Item
 	ItemToUnequip *model.Item
 	DroppedItem   *model.Item
+	DropPos       geometry.Point
 }
 
 type ItemUsageOutcome int
@@ -63,16 +65,12 @@ func (event *ItemUsageEvent) Perform(ctx *model.SessionContext) {
 		if event.ItemToEquip != nil && actor.EquippedGear[event.DroppedItem.Kind] == event.DroppedItem {
 			delete(actor.EquippedGear, event.DroppedItem.Kind)
 		}
-
-		dropPos, ok := ctx.Playthrough.Map.FindEmptyPoint(event.DroppedItem.Pos, 1)
-		if ok {
-			ctx.Playthrough.Map.SetItem(dropPos, int64(event.DroppedItem.Id))
-			ctx.Playthrough.Items[event.DroppedItem.Id] = event.DroppedItem
-		}
+		event.DroppedItem.Pos = event.DropPos
+		ctx.Playthrough.AddItem(event.DroppedItem)
 	}
 }
 
-func (iu *ItemUsage) ConsumeItem(playthrough *model.Playthrough, item *model.Item, a *model.Actor) *ItemUsageEvent {
+func (iu *ItemUsage) ConsumeItem(item *model.Item, a *model.Actor) *ItemUsageEvent {
 	if item == nil || a == nil {
 		return nil
 	}
@@ -84,7 +82,10 @@ func (iu *ItemUsage) ConsumeItem(playthrough *model.Playthrough, item *model.Ite
 		return event
 	}
 
-	event.User.VitalsChange = maps.Clone(item.VitalsChange)
+	itemVitalsChange := maps.Clone(item.VitalsChange)
+	if itemVitalsChange != nil {
+		event.User.VitalsChange = itemVitalsChange
+	}
 	event.User.VitalsChange[model.VitalStamina] -= a.DerivedAttrs[model.AttrActionStaminaCost]
 	event.User.BaseAttrsChange = maps.Clone(item.BaseAttrsChange)
 	event.User.AppliedEffects = item.CloneEffects()
@@ -109,6 +110,7 @@ func (iu *ItemUsage) EquipItem(playthrough *model.Playthrough, newItem *model.It
 
 	if equipped {
 		event.DroppedItem = oldItem
+		event.DropPos, _ = playthrough.Map.FindEmptyPoint(a.Pos, 1)
 	}
 
 	event.RetrievedItem = newItem

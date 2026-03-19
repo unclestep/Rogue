@@ -231,7 +231,7 @@ func TestDoorLockerLockDoors(t *testing.T) {
 
 	t.Run("OneRoomOnTheMap", func(t *testing.T) {
 		seed := time.Now().UnixNano()
-		ctx := setupLockerEnv(seed, 1, 1) // Карта из одной комнаты
+		ctx := setupLockerEnv(seed, 1, 1)
 		m := ctx.Playthrough.Map
 
 		dl.LockDoors(ctx, 3, 3)

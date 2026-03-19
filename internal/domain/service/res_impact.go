@@ -48,7 +48,7 @@ func (e *ImpactResolver) TickEffects(ctx model.SessionContext, a *model.Actor) {
 	impact.DecrementAllRelatedCharges(model.TriggerEffectOnTurn)
 
 	for _, effect := range effects {
-		if effect.IsTemp() {
+		if effect.IsTemp() && !effect.IsExpired() {
 			effect.ExtendDuration(-1)
 		}
 		if effect.IsExpired() {

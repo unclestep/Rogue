@@ -75,11 +75,11 @@ func (a *Actor) CanMove() bool {
 //
 
 func (e *Effect) IsTemp() bool {
-	return e.Duration != -1
+	return e.Duration >= 0
 }
 
 func (e *Effect) IsLimited() bool {
-	return e.Charges != -1
+	return e.Charges >= 0
 }
 
 func (e *Effect) IsExpired() bool {

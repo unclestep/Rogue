@@ -72,6 +72,13 @@ func (b *Backpack) Add(i *Item) bool {
 		return false
 	}
 
+	// If new item literally the same (pointer to same memory allocation), do not add item
+	for _, item := range b.Slots[i.Kind] {
+		if item == i {
+			return false
+		}
+	}
+
 	b.Slots[i.Kind] = append(b.Slots[i.Kind], i)
 	return true
 }

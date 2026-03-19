@@ -53,6 +53,14 @@ const (
 	ItemLabelKey             ItemLabel = "key"
 )
 
+// Keyhole - a lock identifier used for key-to-door matching
+type Keyhole int
+
+const (
+	KeyholeNone   Keyhole = 0
+	MasterKeyhole Keyhole = -1
+)
+
 //
 // -- CLONE METHODS --
 //
@@ -112,23 +120,6 @@ func (i *Item) CloneProcs() map[TriggerType][]*Reaction {
 //
 // -- CONSTS --
 //
-
-const (
-	MinDuration = 1
-	MaxDuration = 5
-
-	MinHPRegen = 10
-	MaxHPRegen = 50
-
-	MinDexterityBoost = 1
-	MaxDexterityBoost = 5
-
-	MinStrengthBoost = 5
-	MaxStrengthBoost = 10
-
-	MinMaxHPBoost = 5
-	MaxMaxHPBoost = 10
-)
 
 //
 // -- TREASURE CONSTRUCTORS --

@@ -23,15 +23,16 @@ type Playthrough struct {
 }
 
 type MapDTO struct {
-	Width          int         `json:"width"`            // Map width
-	Height         int         `json:"height"`           // Map height
-	TileGrid       [][]CellDTO `json:"tile_grid"`        // Layer 1: Game landscape
-	ItemGrid       [][]int64   `json:"item_grid"`        // Layer 2: Location of items
-	ActorGrid      [][]int64   `json:"actor_grid"`       // Layer 3: Location of actors
-	Rooms          []*RoomDTO  `json:"rooms"`            // Pointers to all level rooms
-	EntranceRoomId int64       `json:"entrance_room_id"` // Pointer to room with spawn point
-	ExitRoomId     int64       `json:"exit_room_id"`     // Pointer to room with exit point
-	ExitPoint      PointDTO    `json:"exit_point"`       // End of level point
+	Width          int                `json:"width"`            // Map width
+	Height         int                `json:"height"`           // Map height
+	TileGrid       [][]CellDTO        `json:"tile_grid"`        // Layer 1: Game landscape
+	ItemGrid       [][]int64          `json:"item_grid"`        // Layer 2: Location of items
+	ActorGrid      [][]int64          `json:"actor_grid"`       // Layer 3: Location of actors
+	Rooms          []*RoomDTO         `json:"rooms"`            // Pointers to all level rooms
+	Doors          []*DoorMetadataDTO `json:"doors"`            // All doors on the map
+	EntranceRoomId int64              `json:"entrance_room_id"` // Pointer to room with spawn point
+	ExitRoomId     int64              `json:"exit_room_id"`     // Pointer to room with exit point
+	ExitPoint      PointDTO           `json:"exit_point"`       // End of level point
 }
 
 type CellDTO struct {
@@ -40,12 +41,11 @@ type CellDTO struct {
 }
 
 type RoomDTO struct {
-	Id     int64              `json:"id"`
-	Pos    PointDTO           `json:"pos"`    // Left-upper walkable corner
-	Width  int                `json:"width"`  // Room width
-	Height int                `json:"height"` // Room height
-	Center PointDTO           `json:"center"` // Room center
-	Doors  []*DoorMetadataDTO `json:"doors"`
+	Id     int64    `json:"id"`
+	Pos    PointDTO `json:"pos"`    // Left-upper walkable corner
+	Width  int      `json:"width"`  // Room width
+	Height int      `json:"height"` // Room height
+	Center PointDTO `json:"center"` // Room center
 }
 
 type DoorMetadataDTO struct {
@@ -56,10 +56,6 @@ type DoorMetadataDTO struct {
 }
 
 type PlaythroughId int
-
-const (
-	InvalidPlaythroughId = 0
-)
 
 type GameStatsDTO struct {
 	// Main statistics
@@ -180,7 +176,7 @@ type GameRulesDTO struct {
 	TimeForMove            int                  `json:"time_for_move"` // Time for move in seconds
 }
 
-// DungParams encapsulates all variables used by the generator for a specific level.
+// DungParamsDTO encapsulates all variables used by the generator for a specific level.
 // It includes difficulty scaling, loot distribution, and door-lock mechanics.
 type DungParamsDTO struct {
 	// Monster Distribution: Total count and relative weights of types

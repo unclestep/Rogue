@@ -327,11 +327,11 @@ func (i AttrType) IsAAttrType() bool {
 	return false
 }
 
-const _BehaviorTypeName = "BehaviorIdleBehaviorWanderBehaviorChase"
+const _BehaviorTypeName = "BehaviorWanderBehaviorChase"
 
-var _BehaviorTypeIndex = [...]uint8{0, 12, 26, 39}
+var _BehaviorTypeIndex = [...]uint8{0, 14, 27}
 
-const _BehaviorTypeLowerName = "behavioridlebehaviorwanderbehaviorchase"
+const _BehaviorTypeLowerName = "behaviorwanderbehaviorchase"
 
 func (i BehaviorType) String() string {
 	if i < 0 || i >= BehaviorType(len(_BehaviorTypeIndex)-1) {
@@ -344,26 +344,22 @@ func (i BehaviorType) String() string {
 // Re-run the stringer command to generate them again.
 func _BehaviorTypeNoOp() {
 	var x [1]struct{}
-	_ = x[BehaviorIdle-(0)]
-	_ = x[BehaviorWander-(1)]
-	_ = x[BehaviorChase-(2)]
+	_ = x[BehaviorWander-(0)]
+	_ = x[BehaviorChase-(1)]
 }
 
-var _BehaviorTypeValues = []BehaviorType{BehaviorIdle, BehaviorWander, BehaviorChase}
+var _BehaviorTypeValues = []BehaviorType{BehaviorWander, BehaviorChase}
 
 var _BehaviorTypeNameToValueMap = map[string]BehaviorType{
-	_BehaviorTypeName[0:12]:       BehaviorIdle,
-	_BehaviorTypeLowerName[0:12]:  BehaviorIdle,
-	_BehaviorTypeName[12:26]:      BehaviorWander,
-	_BehaviorTypeLowerName[12:26]: BehaviorWander,
-	_BehaviorTypeName[26:39]:      BehaviorChase,
-	_BehaviorTypeLowerName[26:39]: BehaviorChase,
+	_BehaviorTypeName[0:14]:       BehaviorWander,
+	_BehaviorTypeLowerName[0:14]:  BehaviorWander,
+	_BehaviorTypeName[14:27]:      BehaviorChase,
+	_BehaviorTypeLowerName[14:27]: BehaviorChase,
 }
 
 var _BehaviorTypeNames = []string{
-	_BehaviorTypeName[0:12],
-	_BehaviorTypeName[12:26],
-	_BehaviorTypeName[26:39],
+	_BehaviorTypeName[0:14],
+	_BehaviorTypeName[14:27],
 }
 
 // BehaviorTypeString retrieves an enum value from the enum constants string name.

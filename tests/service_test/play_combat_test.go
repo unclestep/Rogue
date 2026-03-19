@@ -251,8 +251,8 @@ func TestExecuteAttackTriggers(t *testing.T) {
 			t.Errorf("Expected Success due to PreHit Infallible buff, got %v", event.Outcome)
 		}
 
-		if _, exists := event.Attacker.AppliedEffects[model.EffectInfallible]; !exists {
-			t.Error("Expected EffectInfallible to be in Attacker's AppliedEffects")
+		if _, exists := event.Attacker.AppliedEffects[model.EffectInfallible]; exists {
+			t.Error("EffectInfallible should be applied and removed at the same turn")
 		}
 	})
 

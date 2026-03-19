@@ -1,6 +1,8 @@
 package service
 
 import (
+	"cmp"
+	"log"
 	"slices"
 
 	"github.com/unclestep/Rogue/internal/domain/model"
@@ -43,26 +45,25 @@ type Transition struct {
 func (m *MonsterController) Tick(ctx *model.SessionContext) map[model.ActorId]*model.Intent {
 	monsters := conv.MapValsToSlice(ctx.Playthrough.Monsters)
 	slices.SortFunc(monsters, func(a, b *model.Actor) int {
-		if a.DerivedAttrs[model.AttrDexterity] > b.DerivedAttrs[model.AttrDexterity] {
-			return 1
-		} else if a.DerivedAttrs[model.AttrDexterity] < b.DerivedAttrs[model.AttrDexterity] {
-			return -1
-		}
-		return 0
+		return cmp.Compare(b.DerivedAttrs[model.AttrDexterity], a.DerivedAttrs[model.AttrDexterity])
 	})
 
 	intents := make(map[model.ActorId]*model.Intent, len(monsters))
 
 	for _, monster := range monsters {
 		if monster.Vitals[model.VitalHP] <= 0 {
-			ctx.Playthrough.RemoveActor(monster)
+			ctx.Playthrough.KillActor(monster)
 			continue
 		}
 
 		// Handle chain of transitions
 		for {
 			initState := monster.State
-			nextState, decision := m.behaviors[initState].Update(ctx, monster)
+			behavior, ok := m.behaviors[initState]
+			if !ok {
+				log.Fatalf("Unrecognized monster behavior: %v", initState)
+			}
+			nextState, decision := behavior.Update(ctx, monster)
 
 			if decision != nil {
 				intent := m.moveResolver.Resolve(ctx.Playthrough, monster, decision.MoveVector)
@@ -72,6 +73,7 @@ func (m *MonsterController) Tick(ctx *model.SessionContext) map[model.ActorId]*m
 			if nextState == initState {
 				break
 			}
+			monster.State = nextState
 		}
 	}
 

@@ -109,7 +109,7 @@ func (f *followingGraph) CalcHeuristic(p1, p2 geometry.Point) float64 {
 //
 
 func (p *Pathfinder) DijkstraFind(ctx *model.SessionContext, scentMap [][]int, mover *model.Actor) geometry.Point {
-	if finder, exists := p.dijkstraFinders[mover.MovePattern]; exists {
+	if finder, exists := p.dijkstraFinders[mover.MovePattern]; exists && mover.Pos != model.NewInvalidPoint() {
 		return finder.Find(ctx, scentMap, mover)
 	}
 	return mover.Pos

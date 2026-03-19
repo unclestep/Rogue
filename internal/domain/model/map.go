@@ -106,13 +106,6 @@ type DoorMetadata struct {
 	Keyhole Keyhole        `json:"keyhole"` // Key color which opens this door
 }
 
-// Keyhole - a lock identifier used for key-to-door matching
-type Keyhole int
-
-const (
-	KeyholeNone Keyhole = 0
-)
-
 //
 //
 // --- CONSTRUCTORS ---
@@ -227,7 +220,12 @@ func (m *Map) GetDoorKeyhole(door geometry.Point) (Keyhole, bool) {
 		return 0, false
 	}
 
-	return m.doors[door].Keyhole, true
+	doorMetadata, ok := m.doors[door]
+	if !ok {
+		return MasterKeyhole, true
+	}
+
+	return doorMetadata.Keyhole, true
 }
 
 // GetRoomByPoint - returns room by point (like by coordinates)
@@ -288,7 +286,11 @@ func (m *Map) IsWalkable(p geometry.Point) bool {
 
 // CanMoveTo - returns true if given p is walkable and free of actors
 func (m *Map) CanMoveTo(p geometry.Point) bool {
-	room, _ := m.GetRoomByPoint(p)
+	room, ok := m.GetRoomByPoint(p)
+	if !ok {
+		log.Printf("[WARNING] CanMoveTo: No room found for point %v\n", p)
+		return false
+	}
 	_, acceptActors := room.emptyActorPointsIndex[p]
 	return m.IsWalkable(p) && !m.IsActor(p) && acceptActors
 }

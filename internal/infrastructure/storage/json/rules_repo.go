@@ -3,9 +3,11 @@ package json
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/unclestep/Rogue/internal/domain/model"
-	"github.com/unclestep/Rogue/internal/infrastructure/storage/json/dto"
 	"os"
+
+	"github.com/unclestep/Rogue/internal/domain/model"
+	jsonDto "github.com/unclestep/Rogue/internal/infrastructure/storage/json/dto"
+	"github.com/unclestep/Rogue/internal/infrastructure/storage/json/mapper"
 )
 
 type JsonRulesRepo struct {
@@ -14,34 +16,42 @@ type JsonRulesRepo struct {
 
 func (r *JsonRulesRepo) Get(id model.RulesId) (*model.GameRules, error) {
 	data, err := os.ReadFile(fmt.Sprintf("%s/rules_%d.json", r.folder, id))
-
 	if err != nil {
 		if id == model.DefaultRulesId {
-			defaults := model.NewDefaultGameRules()
-			// defaultsDto := mapper.RulesToDTO(default)
-			data := json.Marshal(defaultsDto)
-			os.WriteFile(fmt.Sprintf("%s/rules_%d.json", r.folder, 0))
-			return model.NewDefaultGameRules(), nil
+			return r.saveAndReturnDefaults()
 		}
 		return r.Get(model.DefaultRulesId)
 	}
 
-	var dto dto.GameRulesDTO
-	err = json.Unmarshal(data, &dto)
-
-	if err != nil {
+	var d jsonDto.GameRulesDTO
+	if err = json.Unmarshal(data, &d); err != nil {
 		if id == model.DefaultRulesId {
-			defaults := model.NewDefaultGameRules()
-			// defaultsDto := mapper.RulesToDTO(default)
-			data := json.Marshal(defaultsDto)
-			os.WriteFile(fmt.Sprintf("%s/rules_%d.json", r.folder, 0))
-			return model.NewDefaultGameRules(), nil
+			return r.saveAndReturnDefaults()
 		}
 		return r.Get(model.DefaultRulesId)
 	}
 
-	// TODO:
-	return mapper.RulesFromDTO(dto), nil
+	return mapper.GameRulesFromDTO(&d), nil
 }
 
-func (r *JsonRulesRepo) Save()
+func (r *JsonRulesRepo) saveAndReturnDefaults() (*model.GameRules, error) {
+	defaults := model.NewDefaultGameRules()
+	defaultsDto := mapper.GameRulesToDTO(defaults)
+
+	data, err := json.Marshal(defaultsDto)
+	if err != nil {
+		return defaults, nil
+	}
+
+	_ = os.WriteFile(fmt.Sprintf("%s/rules_%d.json", r.folder, model.DefaultRulesId), data, 0o644)
+	return defaults, nil
+}
+
+func (r *JsonRulesRepo) Save(rules *model.GameRules) error {
+	d := mapper.GameRulesToDTO(rules)
+	data, err := json.Marshal(d)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(fmt.Sprintf("%s/rules_%d.json", r.folder, rules.Id), data, 0o644)
+}
