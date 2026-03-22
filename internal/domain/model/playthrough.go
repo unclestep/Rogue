@@ -10,22 +10,22 @@ type Playthrough struct {
 	PlaythroughId       PlaythroughId
 	HostId              ActorId
 	RulesId             RulesId
-	Map                 *Map                      `json:"map"`
-	PlayersUuid         map[string]ActorId        `json:"players_uuid"`
-	Players             map[ActorId]*Actor        `json:"players"`
-	PlayersStats        map[ActorId]*GameStats    `json:"players_stats"`
-	PlayersLevelMetrics map[ActorId]*LevelMetrics `json:"level_metrics"`
+	Map                 *Map
+	PlayersUuid         map[string]ActorId
+	Players             map[ActorId]*Actor
+	PlayersStats        map[ActorId]*GameStats
+	PlayersLevelMetrics map[ActorId]*LevelMetrics
 	PlayersFoW          map[ActorId]*VisibleArea
 	PlayerAimAngles     map[ActorId]float64 // flashlight direction per player (radians; not persisted)
 	PlayersNicknames    map[string]string   // UUID → display nickname; not persisted
-	Monsters            map[ActorId]*Actor  `json:"monsters"`
+	Monsters            map[ActorId]*Actor
 	DeadMonsters        map[ActorId]*Actor
-	Items               map[ItemId]*Item `json:"items"`
-	Depth               int              `json:"depth"`
-	State               GameState        `json:"state"`
+	Items               map[ItemId]*Item
+	Depth               int
+	State               GameState
 	DungParams          *DungParams
 	DynamicDifficulty   float64
-	NextId              int64 `json:"next_id"`
+	NextId              int64
 	PendingIntents      []*Intent
 	TurnEvents          []Event
 	TurnDeadline        time.Time
@@ -38,16 +38,16 @@ const InvalidPlaythroughId PlaythroughId = ""
 
 type GameStats struct {
 	// Main statistics
-	TotalTreasure int `json:"total_treasure"`
-	DeepestLevel  int `json:"deepest_level"`
+	TotalTreasure int
+	DeepestLevel  int
 	// Additional statistics
-	MonstersDefeated int `json:"enemies_defeated"`
-	FoodConsumed     int `json:"food_consumed"`
-	ElixirsDrunk     int `json:"elixirs_drunk"`
-	ScrollsRead      int `json:"scrolls_read"`
-	HitsDealt        int `json:"hits_dealt"`
-	HitsReceived     int `json:"hits_received"`
-	TilesTraveled    int `json:"tiles_traveled"`
+	MonstersDefeated int
+	FoodConsumed     int
+	ElixirsDrunk     int
+	ScrollsRead      int
+	HitsDealt        int
+	HitsReceived     int
+	TilesTraveled    int
 }
 
 type GameState int
@@ -59,8 +59,8 @@ const (
 )
 
 type LevelMetrics struct {
-	DamageTaken int `json:"damage_taken"`
-	DamageDealt int `json:"damage_dealt"`
+	DamageTaken int
+	DamageDealt int
 }
 
 func (lm *LevelMetrics) Clear() {

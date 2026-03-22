@@ -52,8 +52,8 @@ func NewMapBlueprint(width, height int) *MapBlueprint {
 
 // Cell - structure for cell model
 type Cell struct {
-	Type   TileType `json:"type"`
-	RoomId RoomId   `json:"room_id"`
+	Type   TileType
+	RoomId RoomId
 }
 
 // TileType - enumeration of cell tile types
@@ -101,9 +101,9 @@ func NewInvalidPoint() geometry.Point {
 
 // DoorMetadata - data of all doors
 type DoorMetadata struct {
-	Pos     geometry.Point `json:"pos"`     // Door position
-	Locked  bool           `json:"locked"`  // Lock state
-	Keyhole Keyhole        `json:"keyhole"` // Key color which opens this door
+	Pos     geometry.Point // Door position
+	Locked  bool           // Lock state
+	Keyhole Keyhole        // Key color which opens this door
 }
 
 //

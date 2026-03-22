@@ -91,10 +91,10 @@ type Actor struct {
 	BaseAttrs    map[AttrType]int    `json:"base_attrs"`    // Base attributes
 	VitalsChange map[VitalType][]int `json:"vitals_change"` // Effects influence on stats (like: hp: 100 (base) + 2 + 3 + 50)
 	AttrsChange  map[AttrType][]int  `json:"attrs_change"`  // Effects influence on attributes (like: strength: 50 (base) + 5 + 10 + 2)
-	// Processed data
-	Vitals   map[string][]string `json:"vitals_stringed"`
-	Attrs    map[string][]string `json:"attrs_stringed"`
-	Statuses []string            `json:"statuses"`
+	// Processed data — keys are typed so consumers can look up by constant.
+	Vitals   map[VitalType][]string `json:"vitals_stringed"`
+	Attrs    map[AttrType][]string  `json:"attrs_stringed"`
+	Statuses []string               `json:"statuses"`
 	// Detailed info about applied effects
 	AppliedEffects []*Effect `json:"applied_effects"`
 	// Providing only in string format

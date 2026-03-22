@@ -667,44 +667,42 @@ func (t *Mapper) formatActorType(actorType model.ActorType) string {
 	}
 }
 
-func (t *Mapper) formatActorVitals(baseVitals map[model.VitalType]int, vitalsChange map[model.VitalType][]int) map[string][]string {
-	stringVitals := make(map[string][]string, len(baseVitals))
+func (t *Mapper) formatActorVitals(baseVitals map[model.VitalType]int, vitalsChange map[model.VitalType][]int) map[dto.VitalType][]string {
+	out := make(map[dto.VitalType][]string, len(baseVitals))
 
-	baseVitalsKV := conv.MapToKV(baseVitals)
-	slices.SortFunc(baseVitalsKV, func(a, b conv.KV[model.VitalType, int]) int { return cmp.Compare(a.Key, b.Key) })
+	baseKV := conv.MapToKV(baseVitals)
+	slices.SortFunc(baseKV, func(a, b conv.KV[model.VitalType, int]) int { return cmp.Compare(a.Key, b.Key) })
 
-	for _, vitalKV := range baseVitalsKV {
-
-		stringKey := t.formatVitalType(vitalKV.Key)
-		stringVitals[stringKey] = make([]string, 0, 8)
-		stringVitals[stringKey] = append(stringVitals[stringKey], fmt.Sprintf("%d (base)", vitalKV.Val))
-
-		for _, change := range vitalsChange[vitalKV.Key] {
-			stringVitals[stringKey] = append(stringVitals[stringKey], strconv.Itoa(change))
+	for _, kv := range baseKV {
+		dtoKey := t.mapVitalType(kv.Key)
+		parts := make([]string, 0, 8)
+		parts = append(parts, fmt.Sprintf("%d (base)", kv.Val))
+		for _, change := range vitalsChange[kv.Key] {
+			parts = append(parts, strconv.Itoa(change))
 		}
+		out[dtoKey] = parts
 	}
 
-	return stringVitals
+	return out
 }
 
-func (t *Mapper) formatActorAttrs(baseAttrs map[model.AttrType]int, attrsChange map[model.AttrType][]int) map[string][]string {
-	stringAttrs := make(map[string][]string, len(baseAttrs))
+func (t *Mapper) formatActorAttrs(baseAttrs map[model.AttrType]int, attrsChange map[model.AttrType][]int) map[dto.AttrType][]string {
+	out := make(map[dto.AttrType][]string, len(baseAttrs))
 
-	baseAttrsKV := conv.MapToKV(baseAttrs)
-	slices.SortFunc(baseAttrsKV, func(a, b conv.KV[model.AttrType, int]) int { return cmp.Compare(a.Key, b.Key) })
+	baseKV := conv.MapToKV(baseAttrs)
+	slices.SortFunc(baseKV, func(a, b conv.KV[model.AttrType, int]) int { return cmp.Compare(a.Key, b.Key) })
 
-	for _, attrKV := range baseAttrsKV {
-
-		stringKey := t.formatAttrType(attrKV.Key)
-		stringAttrs[stringKey] = make([]string, 0, 8)
-		stringAttrs[stringKey] = append(stringAttrs[stringKey], fmt.Sprintf("%d (base)", attrKV.Val))
-
-		for _, change := range attrsChange[attrKV.Key] {
-			stringAttrs[stringKey] = append(stringAttrs[stringKey], strconv.Itoa(change))
+	for _, kv := range baseKV {
+		dtoKey := t.mapAttrType(kv.Key)
+		parts := make([]string, 0, 8)
+		parts = append(parts, fmt.Sprintf("%d (base)", kv.Val))
+		for _, change := range attrsChange[kv.Key] {
+			parts = append(parts, strconv.Itoa(change))
 		}
+		out[dtoKey] = parts
 	}
 
-	return stringAttrs
+	return out
 }
 
 func (t *Mapper) formatAttributes(attrsChange map[model.AttrType]int) []string {

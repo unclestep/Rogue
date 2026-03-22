@@ -1,2 +1,2 @@
-# gouge
-gouge - go implementation of Rouge.
+# Gouge
+Gouge - Golang implementation of Rouge.

@@ -12,19 +12,19 @@ import (
 //
 
 type Effect struct {
-	Kind     EffectType `json:"kind"`
-	Duration int        `json:"duration"`
-	Charges  int        `json:"charges"`
+	Kind     EffectType
+	Duration int
+	Charges  int
 
 	// Passive bonuses
-	VitalsChange   map[VitalType]int  `json:"vitals_change"`   // Temporary HP or stamina boost
-	AttrsChange    map[AttrType]int   `json:"attrs_change"`    // Affects on the computation of derived attributes: it never modifies base attributes
-	StatusesChange map[StatusType]int `json:"statuses_change"` // Can inflict status conditions such as Sleep, Stun, etc.
+	VitalsChange   map[VitalType]int  // Temporary HP or stamina boost
+	AttrsChange    map[AttrType]int   // Affects on the computation of derived attributes: it never modifies base attributes
+	StatusesChange map[StatusType]int // Can inflict status conditions such as Sleep, Stun, etc.
 
 	// Active bonuses
 
-	Procs     map[TriggerType][]*Reaction `json:"procs"`      // Triggers the special ability logic
-	ConsumeOn TriggerType                 `json:"consume_on"` // Situations when we need to decrement the charges
+	Procs     map[TriggerType][]*Reaction // Triggers the special ability logic
+	ConsumeOn TriggerType                 // Situations when we need to decrement the charges
 }
 
 //
@@ -198,13 +198,13 @@ const (
 )
 
 type Reaction struct {
-	Trigger         TriggerType            `json:"trigger"`
-	Target          TargetType             `json:"target"`
-	VitalsChange    map[VitalType]Change   `json:"vitals_change"`
-	BaseAttrsChange map[AttrType]Change    `json:"base_attrs_change"`
-	StatusesChange  map[StatusType]int     `json:"statuses_change"`
-	EffectsToApply  map[EffectType]*Effect `json:"effects_to_apply"`
-	Chance          int                    `json:"chance"`
+	Trigger         TriggerType
+	Target          TargetType
+	VitalsChange    map[VitalType]Change
+	BaseAttrsChange map[AttrType]Change
+	StatusesChange  map[StatusType]int
+	EffectsToApply  map[EffectType]*Effect
+	Chance          int
 }
 
 //
@@ -212,11 +212,11 @@ type Reaction struct {
 //
 
 type Change struct {
-	Holder TargetType `json:"holder"`
-	Vital  VitalType  `json:"vital"`
-	Attr   AttrType   `json:"attr"`
-	Amount int        `json:"amount"`
-	Scale  float64    `json:"scale"`
+	Holder TargetType
+	Vital  VitalType
+	Attr   AttrType
+	Amount int
+	Scale  float64
 }
 
 // Calc - calculates a change based on struct parameters.

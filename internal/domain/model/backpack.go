@@ -6,9 +6,9 @@ import (
 )
 
 type Backpack struct {
-	Slots          map[ItemType][]*Item `json:"slots"`
-	TreasuresValue int                  `json:"treasures_values"`
-	SlotsCapacity  int                  `json:"slots_capacity"`
+	Slots          map[ItemType][]*Item
+	TreasuresValue int
+	SlotsCapacity  int
 }
 
 //

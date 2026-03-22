@@ -326,7 +326,7 @@ func renderHUD(hud *dto.HUD) string {
 	}
 
 	return styleHUD.Render(fmt.Sprintf(
-		" %s %s  STR %d  DEX %d  LVL %d  GOLD %d ",
+		"%s %s\nSTR %d\nDEX %d\nLVL %d\nGOLD %d\n",
 		hpStyle.Render(fmt.Sprintf("HP %d/%d", hud.HP, hud.MaxHP)),
 		hpBar,
 		hud.Strength,
@@ -385,6 +385,8 @@ func isWalkableTile(cell *dto.Cell) bool {
 // Panel renderers
 
 // renderPlayerPanel renders the left player-stats panel (inner content only).
+// Stamina is intentionally omitted — only HP, STR, DEX and GOLD are shown.
+// Active modifiers are displayed inline as "(±N)" when non-zero.
 // The leaderboard is placed below the stats and vertically centred within the
 // remaining panel height so it appears in the lower-middle of the column.
 func renderPlayerPanel(player *dto.Player, leaderboard []dto.LeaderboardEntry, w, h int) string {
@@ -393,41 +395,42 @@ func renderPlayerPanel(player *dto.Player, leaderboard []dto.LeaderboardEntry, w
 	}
 	hud := player.HUD
 	actor := player.Actor
-	if hud == nil {
+	if hud == nil || actor == nil {
 		return ""
 	}
 
 	var sb strings.Builder
 
-	// HP
+	// HP — current / max, coloured bar.
+	hp := actor.BaseVitals[dto.VitalHP]
+	maxHP := actor.BaseAttrs[dto.MaxHealth]
 	hpStyle := styleHPGood
-	if hud.MaxHP > 0 && hud.HP*3 < hud.MaxHP {
+	if maxHP > 0 && hp*3 < maxHP {
 		hpStyle = styleHPLow
 	}
 	barW := w - 4
 	if barW < 4 {
 		barW = 4
 	}
-	sb.WriteString(hpStyle.Render(fmt.Sprintf("HP  %d/%d", hud.HP, hud.MaxHP)))
+	sb.WriteString(hpStyle.Render(fmt.Sprintf("HP  %d/%d", hp, maxHP)))
 	sb.WriteByte('\n')
-	sb.WriteString(buildHPBar(hud.HP, hud.MaxHP, barW))
+	sb.WriteString(buildHPBar(hp, maxHP, barW))
 	sb.WriteByte('\n')
 
-	// Stamina
-	if actor != nil {
-		sta := actor.BaseVitals[dto.VitalStamina]
-		maxSta := actor.BaseAttrs[dto.MaxStamina]
-		sb.WriteString(fmt.Sprintf("STA %d/%d", sta, maxSta))
-		sb.WriteByte('\n')
-	}
-
-	// Attributes
-	sb.WriteString(fmt.Sprintf("STR %-5d DEX %d", hud.Strength, hud.Dexterity))
+	// STR / DEX — base value with optional modifier hint.
+	str := actor.BaseAttrs[dto.Strength]
+	dex := actor.BaseAttrs[dto.Dexterity]
+	sb.WriteString(fmt.Sprintf("STR %-7s DEX %s",
+		fmtStatWithMod(str, actor.AttrsChange[dto.Strength]),
+		fmtStatWithMod(dex, actor.AttrsChange[dto.Dexterity]),
+	))
 	sb.WriteByte('\n')
+
+	// GOLD carried in backpack.
 	sb.WriteString(fmt.Sprintf("GOLD %d", hud.Treasure))
 
-	// Applied effects
-	if actor != nil && len(actor.AppliedEffects) > 0 {
+	// Applied effects.
+	if len(actor.AppliedEffects) > 0 {
 		sb.WriteString("\n─────────────\nEffects:")
 		for _, eff := range actor.AppliedEffects {
 			for _, s := range eff.Statuses {
@@ -454,7 +457,6 @@ func renderPlayerPanel(player *dto.Player, leaderboard []dto.LeaderboardEntry, w
 	lbLines := strings.Count(lbStr, "\n") + 1
 
 	// Centre the leaderboard block within the lower half of the panel.
-	// lbTop is the row where the leaderboard should start (0-indexed).
 	lbTop := h/2 - lbLines/2
 	if lbTop < statsLines+1 {
 		lbTop = statsLines + 1
@@ -518,8 +520,23 @@ func truncate(s string, n int) string {
 	return string(runes[:n-1]) + "…"
 }
 
+// fmtStatWithMod formats a numeric stat as "N" when no active modifiers are
+// present, or "N(±M)" when the sum of all effect-based changes is non-zero.
+// This gives the player a compact but complete picture (e.g. "15(+3)").
+func fmtStatWithMod(base int, changes []int) string {
+	mod := 0
+	for _, c := range changes {
+		mod += c
+	}
+	if mod == 0 {
+		return fmt.Sprintf("%d", base)
+	}
+	return fmt.Sprintf("%d(%+d)", base, mod)
+}
+
 // renderTargetPanel renders the right target-stats panel (inner content only).
 // target is nil when no enemy is adjacent.
+// Stamina is intentionally omitted — only HP, STR and DEX are shown.
 func renderTargetPanel(target *dto.Actor, w, _ int) string {
 	if target == nil {
 		return styleNeutral.Render("No target")
@@ -527,11 +544,11 @@ func renderTargetPanel(target *dto.Actor, w, _ int) string {
 
 	var sb strings.Builder
 
-	// Kind header
+	// Kind header.
 	sb.WriteString(stylePanelTitle.Render(string(target.Kind)))
 	sb.WriteByte('\n')
 
-	// HP
+	// HP — current / max, coloured bar.
 	hp := target.BaseVitals[dto.VitalHP]
 	maxHP := target.BaseAttrs[dto.MaxHealth]
 	hpStyle := styleHPGood
@@ -547,18 +564,15 @@ func renderTargetPanel(target *dto.Actor, w, _ int) string {
 	sb.WriteString(buildHPBar(hp, maxHP, barW))
 	sb.WriteByte('\n')
 
-	// Stamina
-	sta := target.BaseVitals[dto.VitalStamina]
-	maxSta := target.BaseAttrs[dto.MaxStamina]
-	sb.WriteString(fmt.Sprintf("STA %d/%d", sta, maxSta))
-	sb.WriteByte('\n')
-
-	// Attributes
+	// STR / DEX — base value with optional modifier hint.
 	str := target.BaseAttrs[dto.Strength]
 	dex := target.BaseAttrs[dto.Dexterity]
-	sb.WriteString(fmt.Sprintf("STR %-5d DEX %d", str, dex))
+	sb.WriteString(fmt.Sprintf("STR %-7s DEX %s",
+		fmtStatWithMod(str, target.AttrsChange[dto.Strength]),
+		fmtStatWithMod(dex, target.AttrsChange[dto.Dexterity]),
+	))
 
-	// Applied effects
+	// Applied effects.
 	if len(target.AppliedEffects) > 0 {
 		sb.WriteString("\n─────────────\nEffects:")
 		for _, eff := range target.AppliedEffects {

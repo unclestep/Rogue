@@ -25,8 +25,7 @@ func NewRaycaster() *Raycaster { return &Raycaster{} }
 
 // Camera represents the virtual flashlight emitter.
 // Dir is the unit direction vector; Plane is the camera plane perpendicular
-// to Dir whose magnitude equals tan(halfFOV).  This is the standard
-// Lode-raycasting layout: FOV = 2·atan(|Plane| / |Dir|).
+// to Dir whose magnitude equals tan(halfFOV).
 type Camera struct {
 	PosX, PosY     float64
 	DirX, DirY     float64
@@ -34,9 +33,9 @@ type Camera struct {
 }
 
 // NewCameraWithHalfFOV creates a camera whose cone spans 2·halfFOVDeg.
-// Examples:  halfFOVDeg=22.5 → 45 cone,  halfFOVDeg=45 → 90 cone.
+// Examples:  halfFOVDeg=22.5 -> 45 cone,  halfFOVDeg=45 -> 90 cone.
 func NewCameraWithHalfFOV(x, y, angle, halfFOVDeg float64) Camera {
-	// |plane| / |dir| = tan(halfFOV)  →  |plane| = tan(halfFOV) when |dir|=1.
+	// |plane| / |dir| = tan(halfFOV)  ->  |plane| = tan(halfFOV) when |dir|=1.
 	planeScale := math.Tan(halfFOVDeg * math.Pi / 180.0)
 	return Camera{
 		PosX: x, PosY: y,
@@ -75,8 +74,8 @@ func (rc *Raycaster) Flashlight(
 		return // degenerate zero-width cone
 	}
 
-	// Minimal angular step: guarantees ≤ 0.5-cell gap between adjacent rays
-	// at maximum range. Derived directly from geometry — not a magic constant.
+	// Minimal angular step: guarantees <= 0.5-cell gap between adjacent rays
+	// at maximum range. Derived directly from geometry - not a magic constant.
 	step := 0.5 / (planeLen * maxRange)
 
 	for cx := -1.0; cx <= 1.0; cx += step {

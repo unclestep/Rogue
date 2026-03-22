@@ -9,16 +9,16 @@ import (
 
 // Item NOTE: If an item is equipable gear, effects from this item should not be added to actor otherwise they will be taken into account twice
 type Item struct {
-	Id              ItemId                      `json:"id"`
-	Kind            ItemType                    `json:"kind"`
-	Label           ItemLabel                   `json:"label"`
-	Pos             geometry.Point              `json:"pos"`
-	Keyhole         Keyhole                     `json:"keyhole"`
-	Value           int                         `json:"value"`
-	VitalsChange    map[VitalType]int           `json:"vitals_change"`
-	BaseAttrsChange map[AttrType]int            `json:"base_attrs_change"`
-	Effects         map[EffectType]*Effect      `json:"effects"` // Ongoing stat modifiers
-	Procs           map[TriggerType][]*Reaction `json:"procs"`   // Event-driven triggers
+	Id              ItemId
+	Kind            ItemType
+	Label           ItemLabel
+	Pos             geometry.Point
+	Keyhole         Keyhole
+	Value           int
+	VitalsChange    map[VitalType]int
+	BaseAttrsChange map[AttrType]int
+	Effects         map[EffectType]*Effect      // Ongoing stat modifiers
+	Procs           map[TriggerType][]*Reaction // Event-driven triggers
 }
 
 type ItemId int64

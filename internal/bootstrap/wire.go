@@ -2,7 +2,7 @@
 
 package bootstrap
 
-// Standalone injector — composed from the shared provider sets.
+// Standalone injector composed from the shared provider sets.
 // Run `go generate ./internal/bootstrap/` to regenerate wire_gen.go.
 
 //go:generate go run github.com/google/wire/cmd/wire

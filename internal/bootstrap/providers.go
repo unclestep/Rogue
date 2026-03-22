@@ -11,8 +11,6 @@ import (
 	jsonStorage "github.com/unclestep/Rogue/internal/infrastructure/storage/json"
 )
 
-// --- Infrastructure adapters ---
-
 // provideJsonPlaythroughRepo adapts Config.PlaythroughsDir into the constructor.
 func provideJsonPlaythroughRepo(cfg Config) *jsonStorage.JsonPlaythroughRepo {
 	return jsonStorage.NewJsonPlaythroughRepo(cfg.PlaythroughsDir)
@@ -29,8 +27,6 @@ func provideJsonRulesRepo(cfg Config) *jsonStorage.JsonRulesRepo {
 func provideCachedRepo(j *jsonStorage.JsonPlaythroughRepo) *storage.CachedPlaythroughRepo {
 	return storage.NewCachedPlaythroughRepo(j)
 }
-
-// --- Provider sets ---
 
 // InfrastructureSet wires the storage layer.
 var InfrastructureSet = wire.NewSet(

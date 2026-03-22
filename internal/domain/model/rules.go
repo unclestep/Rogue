@@ -21,8 +21,8 @@ const (
 )
 
 type DifficultyCurve struct {
-	Start *DungParams `json:"start_gen_params"`
-	End   *DungParams `json:"end_gen_params"`
+	Start *DungParams
+	End   *DungParams
 }
 
 // DungParams encapsulates all variables used by the generator for a specific level.
@@ -30,22 +30,22 @@ type DifficultyCurve struct {
 type DungParams struct {
 	// Monster Distribution: Total count and relative weights of types
 	// Number and difficulty of enemies increases
-	MaxMonsters            int                `json:"max_monsters"`             // Max possible number of monsters which can be spawned
-	MinMonsters            int                `json:"min_monsters"`             // Min possible number of monsters which can be spawned
-	MonsterWeights         map[ActorLabel]int `json:"monster_weights"`          // Probability of each monster type spawn
-	MonsterStatsMultiplier float64            `json:"monster_stats_multiplier"` // Multiplier for monster HP/Stamina/Strength/Dexterity etc. to increase difficulty
+	MaxMonsters            int                // Max possible number of monsters which can be spawned
+	MinMonsters            int                // Min possible number of monsters which can be spawned
+	MonsterWeights         map[ActorLabel]int // Probability of each monster type spawn
+	MonsterStatsMultiplier float64            // Multiplier for monster HP/Stamina/Strength/Dexterity etc. to increase difficulty
 
 	// Item Distribution: Total count and relative weights of types
 	// Amount of useful items decreases.
-	MaxItems                int               `json:"max_items"`                 // Max possible number of items which can be spawned
-	MinItems                int               `json:"min_items"`                 // Min possible number of items which can be spawned
-	ItemWeights             map[ItemLabel]int `json:"item_weights"`              // Probability of each item type spawn
-	TreasureValueMultiplier float64           `json:"treasure_value_multiplier"` // Value of monsters' loot; increases every level
+	MaxItems                int               // Max possible number of items which can be spawned
+	MinItems                int               // Min possible number of items which can be spawned
+	ItemWeights             map[ItemLabel]int // Probability of each item type spawn
+	TreasureValueMultiplier float64           // Value of monsters' loot; increases every level
 
 	// Level Architecture: Controls locked door
-	LockedDoorsStartDepth int `json:"locked_door_start_depth"` // Level depth where chance of spawning key-locked doors becomes real
-	MaxLockedDoors        int `json:"max_locked_doors"`        // Max possible number of key-locked doors which can be spawned
-	MinLockedDoors        int `json:"min_locked_doors"`        // Min possible number of key-locked doors which can be spawned
+	LockedDoorsStartDepth int // Level depth where chance of spawning key-locked doors becomes real
+	MaxLockedDoors        int // Max possible number of key-locked doors which can be spawned
+	MinLockedDoors        int // Min possible number of key-locked doors which can be spawned
 }
 
 func (d *DifficultyCurve) At(curDepth, totalDepth int, dynamicDifficulty float64) *DungParams {
