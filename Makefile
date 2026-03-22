@@ -36,8 +36,6 @@ $(PLATFORMS):
 	@echo "Building for $(os)/$(arch)..."
 	GOOS=$(os) GOARCH=$(arch) $(CC) build $(LDFLAGS) -o $(BUILD_DIR)/$(os)-$(arch)/$(APP_NAME)$(if $(findstring windows,$(os)),.exe) $(CMD)
 
-# Нужно будет создать пайплайн для тегов, но потом
-# make release VERSION=
 release: clean build
 	@mkdir -p $(BUILD_DIR)/dist
 	@for dir in $(wildcard $(BUILD_DIR)/*-*) ; do \

@@ -1,8 +1,18 @@
-// package main - реализация игры Rogue на Go.
 package main
 
-import "fmt"
+import (
+	"github.com/unclestep/Rogue/internal/bootstrap"
+	"io"
+	"log"
+)
+
+func init() {
+	log.SetOutput(io.Discard)
+}
 
 func main() {
-	fmt.Println("Hello  World")
+	bootstrap.InitializeApp(bootstrap.Config{
+		PlaythroughsDir: "saves/playthroughs",
+		RulesDir:        "saves/rules",
+	}).Run()
 }

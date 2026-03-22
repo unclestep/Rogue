@@ -1,0 +1,371 @@
+package model
+
+import (
+	"log"
+	"maps"
+)
+
+//
+//
+// --- EFFECT ---
+//
+//
+
+type Effect struct {
+	Kind     EffectType
+	Duration int
+	Charges  int
+
+	// Passive bonuses
+	VitalsChange   map[VitalType]int  // Temporary HP or stamina boost
+	AttrsChange    map[AttrType]int   // Affects on the computation of derived attributes: it never modifies base attributes
+	StatusesChange map[StatusType]int // Can inflict status conditions such as Sleep, Stun, etc.
+
+	// Active bonuses
+
+	Procs     map[TriggerType][]*Reaction // Triggers the special ability logic
+	ConsumeOn TriggerType                 // Situations when we need to decrement the charges
+}
+
+//
+// -- EFFECT TYPES --
+//
+
+type EffectType string
+
+const (
+	EffectUnknown         EffectType = "unknown"
+	EffectElixirDexterity EffectType = "elixir_dexterity"
+	EffectElixirStrength  EffectType = "elixir_strength"
+	EffectElixirMaxHP     EffectType = "elixir_max_hp"
+	EffectWeaponDefault   EffectType = "weapon_default"
+	EffectFatigue         EffectType = "fatigue"
+	EffectUntouchable     EffectType = "untouchable"
+	EffectSleep           EffectType = "sleep"
+	EffectInfallible      EffectType = "infallible"
+)
+
+//
+// --- STATUSES ---
+//
+
+type StatusType string
+
+const (
+	StatusUnknown     StatusType = "unknown"
+	StatusSleep       StatusType = "sleep"
+	StatusFatigue     StatusType = "fatigue"
+	StatusUntouchable StatusType = "untouchable"
+	StatusBlindness   StatusType = "blindness"
+	StatusInfallible  StatusType = "infallible"
+)
+
+// Fast checkers
+
+func (a *Actor) CanAttack() bool {
+	return a.Statuses[StatusSleep] == 0 && a.Statuses[StatusFatigue] == 0
+}
+
+func (a *Actor) CanMove() bool {
+	return a.Statuses[StatusSleep] == 0
+}
+
+//
+// -- PREDICATES --
+//
+
+func (e *Effect) IsTemp() bool {
+	return e.Duration >= 0
+}
+
+func (e *Effect) IsLimited() bool {
+	return e.Charges >= 0
+}
+
+func (e *Effect) IsExpired() bool {
+	return e.Duration == 0
+}
+
+func (e *Effect) IsRunOut() bool {
+	return e.Charges == 0
+}
+
+//
+// -- SETTERS --
+//
+
+func (e *Effect) MakeInfinite() {
+	e.Duration = -1
+}
+
+func (e *Effect) MakeUnlimited() {
+	e.Charges = -1
+}
+
+func (e *Effect) ExtendDuration(d int) {
+	if e.IsTemp() {
+		e.Duration += d
+	}
+}
+
+func (e *Effect) AddCharges(c int) {
+	if e.IsLimited() {
+		e.Charges += c
+	}
+}
+
+//
+// -- GETTERS --
+//
+
+func (e *Effect) GetBuffs() map[AttrType]int {
+	buffs := make(map[AttrType]int, len(e.AttrsChange))
+
+	for attr, change := range e.AttrsChange {
+		if change > 0 {
+			buffs[attr] = change
+		}
+	}
+
+	return buffs
+}
+
+func (e *Effect) GetDebuffs() map[AttrType]int {
+	debuffs := make(map[AttrType]int, len(e.AttrsChange))
+
+	for attr, change := range e.AttrsChange {
+		if change < 0 {
+			debuffs[attr] = change
+		}
+	}
+
+	return debuffs
+}
+
+func (e *Effect) Clone() *Effect {
+	if e == nil {
+		return nil
+	}
+
+	clone := &Effect{
+		Kind:           e.Kind,
+		Duration:       e.Duration,
+		Charges:        e.Charges,
+		VitalsChange:   maps.Clone(e.VitalsChange),
+		AttrsChange:    maps.Clone(e.AttrsChange),
+		StatusesChange: maps.Clone(e.StatusesChange),
+		ConsumeOn:      e.ConsumeOn,
+	}
+
+	if e.Procs != nil {
+		clone.Procs = make(map[TriggerType][]*Reaction)
+		for trigger, reactions := range e.Procs {
+			clonedReactions := make([]*Reaction, len(reactions))
+			for i, r := range reactions {
+				clonedReactions[i] = r.Clone()
+			}
+			clone.Procs[trigger] = clonedReactions
+		}
+	}
+
+	return clone
+}
+
+//
+// --- REACTIONS ---
+//
+
+//go:generate enumer -type=TriggerType -json -text -transform=snake_case
+type TriggerType int
+
+const (
+	TriggerNotSpecified TriggerType = iota // What actors do before a combat
+	TriggerOnPreHit
+	TriggerOnHit    // What actor does when he deals a damage
+	TriggerOnDamage // What actor does when he gets a damage
+	TriggerOnMove
+	TriggerEffectOnExpire
+	TriggerEffectOnTurn
+)
+
+//go:generate enumer -type=TargetType -json -text -transform=snake_case
+type TargetType int
+
+const (
+	TargetNotSpecified TargetType = iota
+	TargetOpponent
+	TargetSource
+)
+
+type Reaction struct {
+	Trigger         TriggerType
+	Target          TargetType
+	VitalsChange    map[VitalType]Change
+	BaseAttrsChange map[AttrType]Change
+	StatusesChange  map[StatusType]int
+	EffectsToApply  map[EffectType]*Effect
+	Chance          int
+}
+
+//
+// -- CHANGE --
+//
+
+type Change struct {
+	Holder TargetType
+	Vital  VitalType
+	Attr   AttrType
+	Amount int
+	Scale  float64
+}
+
+// Calc - calculates a change based on struct parameters.
+func (c *Change) Calc(source, opponent *Actor) int {
+	if c.Vital == VitalUnknown && c.Attr == AttrUnknown {
+		log.Printf("[INFO] Cannot calculate change: Vital and/or Attr is not specified. Change structure:\n%v\n", c)
+		return 0
+	}
+
+	if c.Holder == TargetNotSpecified {
+		log.Printf("[INFO] Cannot calculate change: attribute holder is not specified. Change structure:\n%v\n", c)
+		return 0
+	}
+
+	holder := source
+	if c.Holder == TargetOpponent {
+		holder = opponent
+	}
+
+	var val int
+	if c.Vital == VitalUnknown {
+		val = holder.DerivedAttrs[c.Attr]
+	} else {
+		val = holder.Vitals[c.Vital]
+	}
+
+	return c.Amount + int(float64(val)*c.Scale)
+}
+
+//
+//
+// --- REACTION GETTERS ---
+//
+//
+
+func (r *Reaction) Clone() *Reaction {
+	if r == nil {
+		return nil
+	}
+
+	clone := &Reaction{
+		Trigger:         r.Trigger,
+		Target:          r.Target,
+		Chance:          r.Chance,
+		VitalsChange:    maps.Clone(r.VitalsChange),
+		BaseAttrsChange: maps.Clone(r.BaseAttrsChange),
+		StatusesChange:  maps.Clone(r.StatusesChange),
+	}
+
+	if r.EffectsToApply != nil {
+		clone.EffectsToApply = make(map[EffectType]*Effect, len(r.EffectsToApply))
+		for kind, eff := range r.EffectsToApply {
+			clone.EffectsToApply[kind] = eff.Clone()
+		}
+	}
+
+	return clone
+}
+
+//
+//
+// --- SETTERS ---
+//
+//
+
+func (r *Reaction) Perform(source, target *ActorImpact) {
+	if target.VitalsChange == nil && r.VitalsChange != nil {
+		target.VitalsChange = make(map[VitalType]int)
+	}
+
+	for vital, change := range r.VitalsChange {
+		target.VitalsChange[vital] += change.Calc(source.Actor, target.Actor)
+	}
+
+	if target.BaseAttrsChange == nil && r.BaseAttrsChange != nil {
+		target.BaseAttrsChange = make(map[AttrType]int)
+	}
+
+	for attr, change := range r.BaseAttrsChange {
+		target.BaseAttrsChange[attr] += change.Calc(source.Actor, target.Actor)
+	}
+
+	if target.StatusesChange == nil && r.StatusesChange != nil {
+		target.StatusesChange = make(map[StatusType]int)
+	}
+
+	for status, change := range r.StatusesChange {
+		target.StatusesChange[status] += change
+	}
+
+	if target.AppliedEffects == nil && r.EffectsToApply != nil {
+		target.AppliedEffects = make(map[EffectType]*Effect)
+	}
+
+	// Deep copy effects to avoid mutating the original templates
+	for kind, effect := range r.EffectsToApply {
+		target.AppliedEffects[kind] = effect.Clone()
+	}
+}
+
+//
+// -- CONSTRUCTORS --
+//
+
+func NewUntouchableEffect(duration, charges int) *Effect {
+	effect := &Effect{
+		Kind:           EffectUntouchable,
+		Duration:       duration,
+		Charges:        charges,
+		StatusesChange: map[StatusType]int{StatusUntouchable: 1},
+		ConsumeOn:      TriggerOnPreHit,
+	}
+	return effect
+}
+
+func NewSleepEffect(duration int) *Effect {
+	effect := &Effect{
+		Kind:     EffectSleep,
+		Duration: duration,
+		StatusesChange: map[StatusType]int{
+			StatusSleep: 1,
+		},
+	}
+	return effect
+}
+
+func NewFatigueEffect(duration int) *Effect {
+	effect := &Effect{
+		Kind:     EffectFatigue,
+		Duration: duration,
+		StatusesChange: map[StatusType]int{
+			StatusFatigue: 1,
+		},
+	}
+	return effect
+}
+
+func NewInfallibleEffect(duration, charges int) *Effect {
+	effect := &Effect{
+		Kind:     EffectInfallible,
+		Duration: duration,
+		Charges:  charges,
+		AttrsChange: map[AttrType]int{
+			AttrCounterAttackChance: Guaranteed,
+		},
+		StatusesChange: map[StatusType]int{
+			StatusInfallible: 1,
+		},
+		ConsumeOn: TriggerOnPreHit,
+	}
+	return effect
+}
