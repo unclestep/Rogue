@@ -2,43 +2,46 @@ package tui
 
 import (
 	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/unclestep/Rogue/internal/dto"
 )
 
 type UIContext struct {
 	DataToM   chan<- dto.Command
-	DataFromM <-chan dto.WorldInfo
+	DataFromM <-chan dto.GameView
 
-	World    dto.WorldInfo
-	PlayerID int
+	World             dto.GameView
+	PlayerUUID        string
+	Nickname          string // Chosen once at startup; sent with every join command
+	PlaythroughId     string
+	LastPlaythroughId string // Persisted session ID loaded from client.json ("Continue" option).
 
 	Keys   *KeyMap
 	Width  int
 	Height int
 }
 
-func NewUIContext(dataToM chan<- dto.Command, dataFromM <-chan dto.WorldInfo) *UIContext {
+func NewUIContext(dataToM chan<- dto.Command, dataFromM <-chan dto.GameView, playerUUID, lastPlaythroughId string) *UIContext {
 	return &UIContext{
-		DataToM:   dataToM,
-		DataFromM: dataFromM,
+		DataToM:           dataToM,
+		DataFromM:         dataFromM,
+		PlayerUUID:        playerUUID,
+		LastPlaythroughId: lastPlaythroughId,
+		Keys:              NewKeyMap(DefaultKeyConfig()),
 	}
 }
 
-type ScreenState interface {
-	Init() tea.Cmd
-	Update(msg tea.Msg) (ScreenState, tea.Cmd)
-	View() string
-}
-
 type KeyConfig struct {
-	// Moving
+	// Moving (WASD)
 	Up    []string `json:"up"`
 	Right []string `json:"right"`
 	Down  []string `json:"down"`
 	Left  []string `json:"left"`
+	// Flashlight aim (arrow keys — set direction without moving)
+	AimUp    []string `json:"aim_up"`
+	AimDown  []string `json:"aim_down"`
+	AimLeft  []string `json:"aim_left"`
+	AimRight []string `json:"aim_right"`
 	// Yes/no buttons
 	Esc    []string `json:"esc"`
 	Return []string `json:"return"`
@@ -49,6 +52,29 @@ type KeyConfig struct {
 	FoodSlot   []string `json:"foods_slot"`
 	ElixirSlot []string `json:"elixirs_slot"`
 	ScrollSlot []string `json:"scrolls_slot"`
+	// Skip turn (submit no-op intent so the turn resolves without moving)
+	SkipTurn []string `json:"skip_turn"`
+}
+
+func DefaultKeyConfig() KeyConfig {
+	return KeyConfig{
+		Up:         []string{"w"},
+		Down:       []string{"s"},
+		Right:      []string{"d"},
+		Left:       []string{"a"},
+		AimUp:      []string{"up"},
+		AimDown:    []string{"down"},
+		AimLeft:    []string{"left"},
+		AimRight:   []string{"right"},
+		Esc:        []string{"esc"},
+		Return:     []string{"enter"},
+		Inventory:  []string{"i"},
+		WeaponSlot: []string{"h"},
+		FoodSlot:   []string{"j"},
+		ElixirSlot: []string{"k"},
+		ScrollSlot: []string{"e"},
+		SkipTurn:   []string{" "},
+	}
 }
 
 type KeyMap struct {
@@ -56,6 +82,11 @@ type KeyMap struct {
 	Right key.Binding
 	Down  key.Binding
 	Left  key.Binding
+
+	AimUp    key.Binding
+	AimDown  key.Binding
+	AimLeft  key.Binding
+	AimRight key.Binding
 
 	Esc    key.Binding
 	Return key.Binding
@@ -66,6 +97,7 @@ type KeyMap struct {
 	FoodSlot   key.Binding
 	ElixirSlot key.Binding
 	ScrollSlot key.Binding
+	SkipTurn   key.Binding
 }
 
 func NewKeyMap(cfg KeyConfig) *KeyMap {
@@ -85,6 +117,22 @@ func NewKeyMap(cfg KeyConfig) *KeyMap {
 		Left: key.NewBinding(
 			key.WithKeys(cfg.Left...),
 			key.WithHelp("a", "Move Left"),
+		),
+		AimUp: key.NewBinding(
+			key.WithKeys(cfg.AimUp...),
+			key.WithHelp("↑", "Aim Up"),
+		),
+		AimDown: key.NewBinding(
+			key.WithKeys(cfg.AimDown...),
+			key.WithHelp("↓", "Aim Down"),
+		),
+		AimLeft: key.NewBinding(
+			key.WithKeys(cfg.AimLeft...),
+			key.WithHelp("←", "Aim Left"),
+		),
+		AimRight: key.NewBinding(
+			key.WithKeys(cfg.AimRight...),
+			key.WithHelp("→", "Aim Right"),
 		),
 		Esc: key.NewBinding(
 			key.WithKeys(cfg.Esc...),
@@ -114,98 +162,15 @@ func NewKeyMap(cfg KeyConfig) *KeyMap {
 			key.WithKeys(cfg.ScrollSlot...),
 			key.WithHelp("e", "Open scroll slot"),
 		),
+		SkipTurn: key.NewBinding(
+			key.WithKeys(cfg.SkipTurn...),
+			key.WithHelp("space", "Skip turn"),
+		),
 	}
 }
 
-//
-//
-// ---
-//
-//
-
-//
-//
-// --- PLAYING STATE ---
-//
-//
-
-type PlayingState struct {
-	Ctx *UIContext
-}
-
-func NewPlayingState() *PlayingState {
-	return &PlayingState{}
-}
-
-func (p *PlayingState) Init() tea.Cmd {
-	return nil
-}
-
-func (p *PlayingState) Update(msg tea.Msg) (ScreenState, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		p.handleInput(msg.String())
-	case dto.WorldInfo:
-		if msg.State == dto.StateGameover {
-			return NewGameoverState(), nil
-		}
-	}
-
-	return nil, nil
-}
-
-func (p *PlayingState) handleInput(inp string) (ScreenState, tea.Cmd) {
-	switch inp {
-	case key.Matches(inp, p.Ctx.Keys.Up):
-		p.sendCommand(dto.CommandUp)
-	case key.Matches(inp, p.Ctx.Keys.Right):
-		p.sendCommand(dto.CommandRight)
-	case key.Matches(inp, p.Ctx.Keys.Down):
-		p.sendCommand(dto.CommandDown)
-	case key.Matches(inp, p.Ctx.Keys.Left):
-		p.sendCommand(dto.CommandLeft)
-	case key.Matches(inp, p.Ctx.Keys.Inventory):
-		return NewInventoryState(p.Ctx), nil
-	}
-
-	return nil, nil
-}
-
-func (p *PlayingState) sendCommand(cmd dto.CommandType) {
-	p.Ctx.DataToM <- dto.Command{
-		CommandType: cmd,
-		PlayerID:    p.Ctx.PlayerID,
-	}
-}
-
-func (p *PlayingState) View() string {
-	return p.renderMap(p.Ctx.World)
-}
-
-func (p *PlayingState) renderMap(world dto.WorldInfo) string {
-	return ""
-}
-
-type InventoryState struct {
-	Ctx       *UIContext
-	listModel list.Model
-}
-
-//
-//
-// --- INVENTORY STATE ---
-//
-//
-
-func NewInventoryState(ctx *UIContext) InventoryState {
-	l := list.New([]list.Item{}, list.NewDefaultDelegate(), 20, 14)
-	l.Title = "Inventory"
-	return &InventoryState{
-		Ctx:       ctx,
-		listModel: l,
-	}
-}
-
-func (i *InventoryState) Init() tea.Cmd {
-	items := convertDTOToBubble
+type ScreenState interface {
+	Init() tea.Cmd
+	Update(msg tea.Msg) (ScreenState, tea.Cmd)
+	View() string
 }

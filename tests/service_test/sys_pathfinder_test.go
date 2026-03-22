@@ -152,7 +152,7 @@ func makeScentMap(h, w, fill int) [][]int {
 }
 
 func newPathfinderCtx(m *model.Map) *model.SessionContext {
-	play := model.NewPlaythrough(0, 0, 0)
+	play := model.NewPlaythrough("", 0, 0)
 	play.Map = m
 	return model.NewSessionContext(play)
 }

@@ -32,7 +32,10 @@ func NewMapper(repo port.PlaythroughRepository) *Mapper {
 //
 
 func (t *Mapper) MakeSnapshots(id model.PlaythroughId) map[string]*dto.GameView {
-	playthrough, _ := t.repo.Get(id)
+	playthrough, err := t.repo.Get(id)
+	if err != nil || playthrough == nil {
+		return nil
+	}
 
 	snapshots := make(map[string]*dto.GameView, len(playthrough.PlayersUuid))
 
@@ -42,14 +45,22 @@ func (t *Mapper) MakeSnapshots(id model.PlaythroughId) map[string]*dto.GameView 
 			continue
 		}
 
-		snapshots[playerUuid] = &dto.GameView{
-			Height: playthrough.Map.Height,
-			Width:  playthrough.Map.Width,
-			Grid:   t.constructGrid(playthrough, playthrough.Map, playthrough.PlayersFoW[player.Id]),
-			State:  t.mapGameState(playthrough),
-			Player: t.constructPlayer(playthrough, player),
-			Events: t.convertEvents(playthrough.TurnEvents),
+		view := &dto.GameView{
+			PlaythroughId: string(id),
+			State:         t.mapGameState(playthrough),
+			Player:        t.constructPlayer(playthrough, player, playerUuid),
+			Events:        t.convertEvents(playthrough.TurnEvents),
+			LobbyPlayers:  t.constructLobbyPlayers(playthrough),
+			Leaderboard:   t.buildLeaderboard(playthrough),
 		}
+
+		if playthrough.Map != nil {
+			view.Height = playthrough.Map.Height
+			view.Width = playthrough.Map.Width
+			view.Grid = t.constructGrid(playthrough, playthrough.Map, playthrough.PlayersFoW[player.Id])
+		}
+
+		snapshots[playerUuid] = view
 	}
 
 	return snapshots
@@ -60,10 +71,17 @@ func (t *Mapper) constructGrid(playthrough *model.Playthrough, m *model.Map, fow
 	cols := m.Width
 	world := make([][]*dto.Cell, rows)
 
-	for r := 0; r < rows; r++ {
+	for r := range rows {
 		world[r] = make([]*dto.Cell, cols)
-		for c := 0; c < cols; c++ {
-			world[r][c] = t.constructCell(playthrough, m, fow.Area[r][c], r, c)
+		for c := range cols {
+			// Default to Unexplored so players who lack a FOW entry (e.g.
+			// right after dungeon generation, before the first turn) see
+			// darkness rather than the entire map.
+			visibility := model.Unexplored
+			if fow != nil {
+				visibility = fow.Area[r][c]
+			}
+			world[r][c] = t.constructCell(playthrough, m, visibility, r, c)
 		}
 	}
 	return world
@@ -75,8 +93,15 @@ func (t *Mapper) constructCell(playthrough *model.Playthrough, m *model.Map, vis
 	}
 
 	if visibility == model.Visible || visibility == model.Explored {
-		tileType, _ := m.GetTileType(geometry.Point{X: c, Y: r})
+		pos := geometry.Point{X: c, Y: r}
+		tileType, _ := m.GetTileType(pos)
 		cellDTO.TopologyType = t.mapTopologyType(tileType)
+
+		if tileType == model.ClosedDoor {
+			if keyhole, ok := m.GetDoorKeyhole(pos); ok {
+				cellDTO.DoorKeyhole = dto.Keyhole(keyhole)
+			}
+		}
 	}
 
 	if visibility == model.Visible {
@@ -149,7 +174,22 @@ func (t *Mapper) mapActorToDTO(actor *model.Actor) *dto.Actor {
 //
 //
 
-func (t *Mapper) constructPlayer(playthrough *model.Playthrough, actor *model.Actor) *dto.Player {
+func (t *Mapper) constructLobbyPlayers(playthrough *model.Playthrough) []dto.LobbyPlayer {
+	if playthrough.State != model.LobbyGameState {
+		return nil
+	}
+	players := make([]dto.LobbyPlayer, 0, len(playthrough.PlayersUuid))
+	for uuid := range playthrough.PlayersUuid {
+		nick := playthrough.PlayersNicknames[uuid]
+		players = append(players, dto.LobbyPlayer{
+			IsHost:   playthrough.IsHost(uuid),
+			Nickname: nick,
+		})
+	}
+	return players
+}
+
+func (t *Mapper) constructPlayer(playthrough *model.Playthrough, actor *model.Actor, playerUUID string) *dto.Player {
 	if actor == nil {
 		return nil
 	}
@@ -160,16 +200,20 @@ func (t *Mapper) constructPlayer(playthrough *model.Playthrough, actor *model.Ac
 		Inventory: t.constructInventory(actor),
 		Equipped:  t.constructEquipped(actor),
 		RunStats:  t.constructRunStats(playthrough, actor),
+		IsHost:    playthrough.IsHost(playerUUID),
+		Row:       actor.Pos.Y,
+		Col:       actor.Pos.X,
 	}
 }
 
 func (t *Mapper) constructHUD(playthrough *model.Playthrough, a *model.Actor) *dto.HUD {
 	return &dto.HUD{
-		HP:       a.Vitals[model.VitalHP],
-		MaxHP:    a.DerivedAttrs[model.AttrMaxHP],
-		Strength: a.DerivedAttrs[model.AttrStrength],
-		Dungeon:  playthrough.Depth,
-		Treasure: a.Backpack.TreasuresValue,
+		HP:        a.Vitals[model.VitalHP],
+		MaxHP:     a.DerivedAttrs[model.AttrMaxHP],
+		Strength:  a.DerivedAttrs[model.AttrStrength],
+		Dexterity: a.DerivedAttrs[model.AttrDexterity],
+		Dungeon:   playthrough.Depth,
+		Treasure:  a.Backpack.TreasuresValue,
 	}
 }
 
@@ -195,6 +239,38 @@ func (t *Mapper) constructEquipped(a *model.Actor) map[dto.ItemType]*dto.Item {
 	}
 
 	return equipped
+}
+
+// buildLeaderboard aggregates all players' run statistics into a slice sorted
+// by TotalTreasure descending so the UI can display a live leaderboard.
+func (t *Mapper) buildLeaderboard(play *model.Playthrough) []dto.LeaderboardEntry {
+	if len(play.PlayersStats) == 0 {
+		return nil
+	}
+
+	// Build a reverse map so we can look up UUID → nickname by ActorId.
+	actorToUUID := make(map[model.ActorId]string, len(play.PlayersUuid))
+	for uuid, id := range play.PlayersUuid {
+		actorToUUID[id] = uuid
+	}
+
+	entries := make([]dto.LeaderboardEntry, 0, len(play.PlayersStats))
+	for id, stats := range play.PlayersStats {
+		nick := play.PlayersNicknames[actorToUUID[id]]
+		if nick == "" {
+			nick = "???"
+		}
+		entries = append(entries, dto.LeaderboardEntry{
+			Nickname:      nick,
+			TotalTreasure: stats.TotalTreasure,
+			DeepestLevel:  stats.DeepestLevel,
+		})
+	}
+
+	slices.SortFunc(entries, func(a, b dto.LeaderboardEntry) int {
+		return b.TotalTreasure - a.TotalTreasure // descending
+	})
+	return entries
 }
 
 func (t *Mapper) constructRunStats(playthrough *model.Playthrough, a *model.Actor) *dto.RunStats {
@@ -471,6 +547,10 @@ func (t *Mapper) convertEvent(event model.Event) *dto.Event {
 }
 
 func (t *Mapper) formatAttackEvent(event *service.AttackEvent) string {
+	if event.Attacker == nil || event.Defender == nil {
+		return ""
+	}
+
 	attacker := event.Attacker.Actor
 	defender := event.Defender.Actor
 
@@ -509,7 +589,7 @@ func (t *Mapper) formatItemPickupEvent(event *service.ItemPickupEvent) string {
 		if event.PickupItem == nil {
 			return fmt.Sprintf("%v#%v picks up something", t.formatActorType(actor.Kind), actor.Id)
 		}
-		return fmt.Sprintf("%v#%v picks up %s", t.formatActorType(actor.Kind), actor.Id, event.PickupItem.Label)
+		return fmt.Sprintf("%v#%v picks up %s", t.formatActorType(actor.Kind), actor.Id, t.formatItemLabel(event.PickupItem.Label))
 	case service.PickupOutcomeBackpackNoFreeSpace:
 		return fmt.Sprintf("%v#%v cannot pick up item: backpack is full", t.formatActorType(actor.Kind), actor.Id)
 	default:
@@ -523,7 +603,7 @@ func (t *Mapper) formatItemUsageEvent(event *service.ItemUsageEvent) string {
 	switch event.Outcome {
 	case service.ItemUsageOutcomeSuccess:
 		if event.RetrievedItem != nil {
-			return fmt.Sprintf("%v#%v uses %s", t.formatActorType(user.Kind), user.Id, event.RetrievedItem.Label)
+			return fmt.Sprintf("%v#%v uses %s", t.formatActorType(user.Kind), user.Id, t.formatItemLabel(event.RetrievedItem.Label))
 		}
 		return fmt.Sprintf("%v#%v uses an item", t.formatActorType(user.Kind), user.Id)
 	case service.ItemUsageOutcomeNotFound:
@@ -534,6 +614,34 @@ func (t *Mapper) formatItemUsageEvent(event *service.ItemUsageEvent) string {
 		return fmt.Sprintf("%v#%v is too exhausted to use item", t.formatActorType(user.Kind), user.Id)
 	default:
 		return ""
+	}
+}
+
+// formatItemLabel converts a model.ItemLabel constant to a human-readable display name.
+func (t *Mapper) formatItemLabel(label model.ItemLabel) string {
+	switch label {
+	case model.ItemLabelDefaultFood:
+		return "Ration"
+	case model.ItemLabelDexterityElixir:
+		return "Dexterity Elixir"
+	case model.ItemLabelStrengthElixir:
+		return "Strength Elixir"
+	case model.ItemLabelMaxHpElixir:
+		return "Max HP Elixir"
+	case model.ItemLabelDexterityScroll:
+		return "Dexterity Scroll"
+	case model.ItemLabelStrengthScroll:
+		return "Strength Scroll"
+	case model.ItemLabelMaxHpScroll:
+		return "Max HP Scroll"
+	case model.ItemLabelDefaultWeapon:
+		return "Sword"
+	case model.ItemLabelDefaultTreasure:
+		return "Treasure"
+	case model.ItemLabelKey:
+		return "Key"
+	default:
+		return string(label)
 	}
 }
 
@@ -610,7 +718,7 @@ func (t *Mapper) formatAttributes(attrsChange map[model.AttrType]int) []string {
 			continue
 		}
 
-		str := fmt.Sprintf("%s%+d %s", attr.Val, t.formatAttrType(attr.Key))
+		str := fmt.Sprintf("%+d %s", attr.Val, t.formatAttrType(attr.Key))
 		stringAttrs = append(stringAttrs, str)
 	}
 

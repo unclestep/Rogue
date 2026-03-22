@@ -59,6 +59,9 @@ func (o *ObjectSpawner) CreatePlayer(playthrough *model.Playthrough, playerUuid 
 		playthrough.HostId = player.Id
 	}
 	playthrough.PlayersUuid[playerUuid] = player.Id
+	playthrough.Players[player.Id] = player
+	playthrough.PlayersStats[player.Id] = &model.GameStats{}
+	playthrough.PlayersLevelMetrics[player.Id] = &model.LevelMetrics{}
 }
 
 // GenerateItems - spawns items in all rooms except the entrance.

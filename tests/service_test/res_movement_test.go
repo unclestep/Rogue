@@ -80,7 +80,7 @@ func buildResolverMap() *model.Map {
 }
 
 func setupResolverEnv() (*model.Playthrough, *service.MoveResolver, *model.Actor) {
-	play := model.NewPlaythrough(0, 0, 0)
+	play := model.NewPlaythrough("", 0, 0)
 	play.Map = buildResolverMap()
 
 	resolver := service.NewMoveResolverService()
@@ -510,7 +510,7 @@ func TestResolveMoveHandlerCorridorTileIsWalkable(t *testing.T) {
 		ExitPoint:      model.NewInvalidPoint(),
 	}
 
-	play := model.NewPlaythrough(0, 0, 0)
+	play := model.NewPlaythrough("", 0, 0)
 	play.Map = model.NewMapFromBlueprint(blueprint)
 
 	mover := model.NewDefaultPlayer(1, geometry.Point{X: 2, Y: 2}, 9)

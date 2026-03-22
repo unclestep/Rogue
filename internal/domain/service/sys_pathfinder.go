@@ -36,7 +36,7 @@ func (p *Pathfinder) RegisterDijkstraFinders() {
 //
 //
 
-// FindPath - finds the path between two points in map's topology.
+// AFind finds the path between two points in map's topology.
 // Algorithm can only pass through corridors, floors and open doors.
 // It tries to avoid the cells with items and actors.
 // Returns slice of points between two given points including them and bool value, if it could find the way.

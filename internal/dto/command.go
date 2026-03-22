@@ -1,12 +1,14 @@
 package dto
 
 type Command struct {
-	PlaythroughId     int64
+	PlaythroughId     string
 	PlaythroughParams *PlaythroughParams
 	PlayerUUID        string
+	PlayerNickname    string // display name; stored server-side on first join
 	Action            ActionType
 	ItemID            int64
 	MoveVector        Vector
+	AimAngle          float64 // radians; used only with ActionAim
 }
 
 type PlaythroughParams struct {
@@ -31,4 +33,6 @@ const (
 	ActionConsumeItem
 	ActionEquipWeapon
 	ActionUnequipWeapon
+	ActionWait // Player skips their turn; counts as a submitted intent so the turn can resolve.
+	ActionAim  // Player moved the cursor; updates flashlight direction without consuming a turn.
 )

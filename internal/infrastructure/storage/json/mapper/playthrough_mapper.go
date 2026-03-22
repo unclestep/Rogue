@@ -193,7 +193,7 @@ func PlaythroughToDTO(p *model.Playthrough) *dto.Playthrough {
 	}
 
 	d := &dto.Playthrough{
-		PlaythroughId:     int64(p.PlaythroughId),
+		PlaythroughId:     string(p.PlaythroughId),
 		HostId:            int64(p.HostId),
 		RulesId:           int64(p.RulesId),
 		Map:               MapToDTO(p.Map),
@@ -258,7 +258,7 @@ func PlaythroughFromDTO(d *dto.Playthrough) *model.Playthrough {
 	}
 
 	p := &model.Playthrough{
-		PlaythroughId:     model.PlaythroughId(d.PlaythroughId),
+		PlaythroughId:     model.PlaythroughId(d.PlaythroughId), // string → PlaythroughId
 		HostId:            model.ActorId(d.HostId),
 		RulesId:           model.RulesId(d.RulesId),
 		Map:               MapFromDTO(d.Map),
@@ -316,7 +316,7 @@ func PlaythroughFromDTO(d *dto.Playthrough) *model.Playthrough {
 	}
 
 	// Restore transient state to zero values
-	p.PendingIntents = make(map[model.ActorId]*model.Intent)
+	p.PendingIntents = make([]*model.Intent, 0)
 	p.TurnEvents = make([]model.Event, 0)
 
 	return p

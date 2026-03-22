@@ -27,6 +27,7 @@ func NewDungeonGeneratorService(rules *model.GameRules, topGen *TopologyGenerato
 func (d *DungeonGenerator) Gen(ctx *model.SessionContext) {
 	genParams := d.prepareNextDung(ctx.Playthrough)
 	ctx.Playthrough.DungParams = genParams
+	ctx.Playthrough.Map = nil
 
 	d.topologyGenerator.Gen(ctx, d.rules.DungeonWidth, d.rules.DungeonHeight, d.rules.MaxHorizontalRoomCount, d.rules.MaxVerticalRoomCount)
 
@@ -43,10 +44,11 @@ func (d *DungeonGenerator) Gen(ctx *model.SessionContext) {
 	monsterWeights := conv.MapToKV(genParams.MonsterWeights)
 	d.objectSpawner.GenerateMonsters(ctx, monsterCount, monsterWeights)
 
-	d.showPlayers(ctx)
+	d.ShowPlayers(ctx)
 }
 
 func (d *DungeonGenerator) prepareNextDung(play *model.Playthrough) *model.DungParams {
+	d.clearPrevDung(play)
 	play.Depth++
 
 	genParams := d.rules.DiffCurve.At(play.Depth, d.rules.MaxDungeonCount, play.DynamicDifficulty)
@@ -63,9 +65,17 @@ func (d *DungeonGenerator) prepareNextDung(play *model.Playthrough) *model.DungP
 	return genParams
 }
 
-// ShowPlayers - shows all players in new dungeon level.
-// Use this function when move players to the new dungeon level.
-func (d *DungeonGenerator) showPlayers(ctx *model.SessionContext) {
+func (d *DungeonGenerator) clearPrevDung(play *model.Playthrough) {
+	clear(play.Monsters)
+	clear(play.DeadMonsters)
+	clear(play.Items)
+	play.PendingIntents = play.PendingIntents[:0]
+	play.TurnEvents = play.TurnEvents[:0]
+}
+
+// ShowPlayers places hidden-but-alive players onto the entrance room.
+// Called during Gen() for a new dungeon level and when resuming a saved game.
+func (d *DungeonGenerator) ShowPlayers(ctx *model.SessionContext) {
 	m := ctx.Playthrough.Map
 	rooms := slices.Clone(m.GetRooms())
 	i := 0
@@ -78,23 +88,21 @@ func (d *DungeonGenerator) showPlayers(ctx *model.SessionContext) {
 	}
 
 	for _, player := range ctx.Playthrough.Players {
-		if player.Pos == model.NewInvalidPoint() {
-			for len(rooms) > 0 {
-				room := rooms[i]
-				p, ok := m.TakeRandomActorPoint(room, ctx.Rng())
+		for len(rooms) > 0 {
+			room := rooms[i]
+			p, ok := m.TakeRandomActorPoint(room, ctx.Rng())
 
-				if ok {
-					player.Pos = p
-					m.SetActor(p, int64(player.Id))
-					if player.Vitals[model.VitalHP] <= 0 {
-						player.Vitals[model.VitalHP] = int(d.rules.HpRestore * float64(player.BaseAttrs[model.AttrMaxHP]))
-					}
-					break
+			if ok {
+				player.Pos = p
+				m.SetActor(p, int64(player.Id))
+				if player.Vitals[model.VitalHP] <= 0 {
+					player.Vitals[model.VitalHP] = int(d.rules.HpRestore * float64(player.BaseAttrs[model.AttrMaxHP]))
 				}
-
-				rooms = algorithm.Remove(rooms, i)
-				i = 0
+				break
 			}
+
+			rooms = algorithm.Remove(rooms, i)
+			i = 0
 		}
 	}
 }

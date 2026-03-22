@@ -9,7 +9,7 @@ import (
 
 // setupPlaythrough returns a minimal Playthrough with no map attached.
 func setupPlaythrough() *model.Playthrough {
-	return model.NewPlaythrough(0, 0, 42)
+	return model.NewPlaythrough("", 0, 42)
 }
 
 // setupPlaythroughWithMap returns a Playthrough with the standard test map attached.
@@ -38,10 +38,10 @@ func addMonster(p *model.Playthrough, id model.ActorId, pos geometry.Point) *mod
 // --- NewPlaythrough ---
 
 func TestNewPlaythrough(t *testing.T) {
-	p := model.NewPlaythrough(7, 3, 99)
+	p := model.NewPlaythrough("test-7", 3, 99)
 
-	if p.PlaythroughId != 7 {
-		t.Errorf("Expected PlaythroughId=7, got %d", p.PlaythroughId)
+	if p.PlaythroughId != "test-7" {
+		t.Errorf("Expected PlaythroughId=test-7, got %s", p.PlaythroughId)
 	}
 	if p.RulesId != 3 {
 		t.Errorf("Expected RulesId=3, got %d", p.RulesId)
@@ -71,7 +71,7 @@ func TestNewPlaythrough(t *testing.T) {
 		t.Errorf("Expected PlayersUuid map to be initialized")
 	}
 	if p.PendingIntents == nil {
-		t.Errorf("Expected PendingIntents map to be initialized")
+		t.Errorf("Expected PendingIntents slice to be initialized")
 	}
 	if p.TurnEvents == nil {
 		t.Errorf("Expected TurnEvents slice to be initialized")

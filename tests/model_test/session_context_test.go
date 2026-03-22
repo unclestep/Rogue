@@ -61,8 +61,8 @@ func TestRngReturnsSameInstance(t *testing.T) {
 }
 
 func TestRngDeterministicSequence(t *testing.T) {
-	p1 := model.NewPlaythrough(1, 0, 12345)
-	p2 := model.NewPlaythrough(2, 0, 12345)
+	p1 := model.NewPlaythrough("test-1", 0, 12345)
+	p2 := model.NewPlaythrough("test-2", 0, 12345)
 
 	ctx1 := model.NewSessionContext(p1)
 	ctx2 := model.NewSessionContext(p2)
@@ -78,8 +78,8 @@ func TestRngDeterministicSequence(t *testing.T) {
 }
 
 func TestRngDifferentSeedsDifferentSequences(t *testing.T) {
-	p1 := model.NewPlaythrough(1, 0, 1)
-	p2 := model.NewPlaythrough(2, 0, 2)
+	p1 := model.NewPlaythrough("test-1", 0, 1)
+	p2 := model.NewPlaythrough("test-2", 0, 2)
 
 	ctx1 := model.NewSessionContext(p1)
 	ctx2 := model.NewSessionContext(p2)

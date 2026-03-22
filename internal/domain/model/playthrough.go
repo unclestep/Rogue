@@ -16,7 +16,9 @@ type Playthrough struct {
 	PlayersStats        map[ActorId]*GameStats    `json:"players_stats"`
 	PlayersLevelMetrics map[ActorId]*LevelMetrics `json:"level_metrics"`
 	PlayersFoW          map[ActorId]*VisibleArea
-	Monsters            map[ActorId]*Actor `json:"monsters"`
+	PlayerAimAngles     map[ActorId]float64 // flashlight direction per player (radians; not persisted)
+	PlayersNicknames    map[string]string   // UUID → display nickname; not persisted
+	Monsters            map[ActorId]*Actor  `json:"monsters"`
 	DeadMonsters        map[ActorId]*Actor
 	Items               map[ItemId]*Item `json:"items"`
 	Depth               int              `json:"depth"`
@@ -24,17 +26,15 @@ type Playthrough struct {
 	DungParams          *DungParams
 	DynamicDifficulty   float64
 	NextId              int64 `json:"next_id"`
-	PendingIntents      map[ActorId]*Intent
+	PendingIntents      []*Intent
 	TurnEvents          []Event
 	TurnDeadline        time.Time
 	Seed                int64
 }
 
-type PlaythroughId int
+type PlaythroughId string
 
-const (
-	InvalidPlaythroughId = 0
-)
+const InvalidPlaythroughId PlaythroughId = ""
 
 type GameStats struct {
 	// Main statistics
@@ -84,6 +84,8 @@ func NewPlaythrough(playId PlaythroughId, rulesId RulesId, seed int64) *Playthro
 		PlayersStats:        make(map[ActorId]*GameStats),
 		PlayersLevelMetrics: make(map[ActorId]*LevelMetrics),
 		PlayersFoW:          make(map[ActorId]*VisibleArea),
+		PlayerAimAngles:     make(map[ActorId]float64),
+		PlayersNicknames:    make(map[string]string),
 		Monsters:            make(map[ActorId]*Actor),
 		DeadMonsters:        make(map[ActorId]*Actor),
 		Items:               make(map[ItemId]*Item),
@@ -92,7 +94,7 @@ func NewPlaythrough(playId PlaythroughId, rulesId RulesId, seed int64) *Playthro
 		DungParams:          nil,
 		DynamicDifficulty:   1,
 		NextId:              1,
-		PendingIntents:      make(map[ActorId]*Intent),
+		PendingIntents:      make([]*Intent, 0),
 		TurnEvents:          make([]Event, 0),
 		TurnDeadline:        time.Time{},
 		Seed:                seed,
@@ -150,6 +152,25 @@ func (gs *Playthrough) ClearMetrics() {
 //
 //
 
+func (gs *Playthrough) HasPendingIntent(actorId ActorId) bool {
+	for _, intent := range gs.PendingIntents {
+		if intent != nil && intent.Actor == actorId {
+			return true
+		}
+	}
+	return false
+}
+
+func (gs *Playthrough) PendingPlayerIntentCount() int {
+	count := 0
+	for _, intent := range gs.PendingIntents {
+		if intent != nil && gs.IsPlayer(intent.Actor) {
+			count++
+		}
+	}
+	return count
+}
+
 func (gs *Playthrough) GetAlivePlayers() []ActorId {
 	alive := make([]ActorId, 0, len(gs.Players))
 
@@ -206,6 +227,10 @@ func (gs *Playthrough) GetId() int64 {
 // --- PREDICATES ---
 //
 //
+
+func (gs *Playthrough) IsDungeonCreated() bool {
+	return gs.Map != nil && gs.Map.GetRoomCount() > 0
+}
 
 func (gs *Playthrough) IsPlayer(actorId ActorId) bool {
 	_, exists := gs.Players[actorId]
@@ -371,11 +396,14 @@ func (gs *Playthrough) DisconnectPlayer(playerUuid string) {
 	gs.HidePlayer(player.Id)
 }
 
-// HidePlayer - removes player from the map, but keeps it alive.
-// After this function player will not be shown on the map.
+// HidePlayer removes the player from the map grid and marks their position as
+// invalid, but keeps them alive. Safe to call before the dungeon is generated
+// (Map == nil) — the map removal is skipped in that case.
 func (gs *Playthrough) HidePlayer(id ActorId) {
 	if player, exists := gs.Players[id]; exists {
-		gs.Map.RemoveActor(player.Pos)
+		if gs.Map != nil {
+			gs.Map.RemoveActor(player.Pos)
+		}
 		player.Pos = NewInvalidPoint()
 	}
 }

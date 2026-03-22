@@ -9,7 +9,7 @@ import (
 )
 
 func setupTestEnv() (*model.SessionContext, *service.Combat, *model.Actor, *model.Actor) {
-	play := model.NewPlaythrough(0, 0, 0)
+	play := model.NewPlaythrough("", 0, 0)
 	ctx := model.NewSessionContext(play)
 	impactResolver := service.NewImpactResolverService()
 	cs := service.NewCombatService(impactResolver)

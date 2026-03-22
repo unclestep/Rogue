@@ -49,7 +49,11 @@ func (ctx *SessionContext) buildChaseMap() {
 	interest := make([]geometry.Point, 0, len(ctx.Playthrough.Players))
 
 	for _, player := range ctx.Playthrough.Players {
-		interest = append(interest, player.Pos)
+		// Skip hidden players — their Pos is NewInvalidPoint() = {-1,-1} which
+		// would cause an out-of-bounds access inside GenerateScentMap.
+		if player.Pos != NewInvalidPoint() {
+			interest = append(interest, player.Pos)
+		}
 	}
 
 	ctx.ScentMaps[ScentMapChase] = &ScentMap{

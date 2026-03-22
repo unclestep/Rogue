@@ -52,6 +52,15 @@ func buildMonsterTestMap() *model.Map {
 	return model.NewMapFromBlueprint(blueprint)
 }
 
+func hasIntentForActor(intents []*model.Intent, actorId model.ActorId) bool {
+	for _, intent := range intents {
+		if intent != nil && intent.Actor == actorId {
+			return true
+		}
+	}
+	return false
+}
+
 func newMonsterController() *service.MonsterController {
 	pathfinder := service.NewPathfinderService()
 	resolver := service.NewMoveResolverService()
@@ -69,7 +78,7 @@ func newMonsterController() *service.MonsterController {
 //
 
 func TestMonsterControllerTickDeadMonsterRemovedFromMonstersMap(t *testing.T) {
-	play := model.NewPlaythrough(0, 0, 0)
+	play := model.NewPlaythrough("", 0, 0)
 	play.Map = buildMonsterTestMap()
 
 	player := model.NewDefaultPlayer(1, geometry.Point{X: 7, Y: 7}, 9)
@@ -96,7 +105,7 @@ func TestMonsterControllerTickDeadMonsterRemovedFromMonstersMap(t *testing.T) {
 // and does nothing. The actor's original tile in actorGrid is never cleared.
 // Any subsequent query to that tile will report an actor still present there.
 func TestMonsterControllerTickDeadMonsterRemovalLeavesActorInMapGrid(t *testing.T) {
-	play := model.NewPlaythrough(0, 0, 0)
+	play := model.NewPlaythrough("", 0, 0)
 	play.Map = buildMonsterTestMap()
 
 	player := model.NewDefaultPlayer(1, geometry.Point{X: 7, Y: 7}, 9)
@@ -136,7 +145,7 @@ func TestMonsterControllerTickDeadMonsterRemovalLeavesActorInMapGrid(t *testing.
 // BehaviorIdle. Calling Tick on such a monster dereferences a nil interface
 // value and panics.
 func TestMonsterControllerTickUnregisteredBehaviorStatePanics(t *testing.T) {
-	play := model.NewPlaythrough(0, 0, 0)
+	play := model.NewPlaythrough("", 0, 0)
 	play.Map = buildMonsterTestMap()
 
 	player := model.NewDefaultPlayer(1, geometry.Point{X: 7, Y: 7}, 9)
@@ -173,7 +182,7 @@ func TestMonsterControllerTickUnregisteredBehaviorStatePanics(t *testing.T) {
 // updated inside the loop, so initState is always BehaviorWander, the
 // transition condition fires again, and the loop runs forever.
 func TestMonsterControllerTickWanderToChaseTransitionLoopsForever(t *testing.T) {
-	play := model.NewPlaythrough(0, 0, 0)
+	play := model.NewPlaythrough("", 0, 0)
 	play.Map = buildMonsterTestMap()
 
 	// Player and monster within aggro range: dist(2) <= hostility(3).
@@ -210,7 +219,7 @@ func TestMonsterControllerTickWanderToChaseTransitionLoopsForever(t *testing.T) 
 //
 
 func TestMonsterControllerTickWanderNoTransitionProducesIntent(t *testing.T) {
-	play := model.NewPlaythrough(0, 0, 0)
+	play := model.NewPlaythrough("", 0, 0)
 	play.Map = buildMonsterTestMap()
 
 	// Player far from monster: dist > hostility. No transition should fire.
@@ -228,7 +237,7 @@ func TestMonsterControllerTickWanderNoTransitionProducesIntent(t *testing.T) {
 	ctx := model.NewSessionContext(play)
 
 	done := make(chan struct{})
-	var intents map[model.ActorId]*model.Intent
+	var intents []*model.Intent
 	go func() {
 		defer close(done)
 		intents = ctrl.Tick(ctx)
@@ -240,7 +249,7 @@ func TestMonsterControllerTickWanderNoTransitionProducesIntent(t *testing.T) {
 		t.Fatalf("Tick hung: possible transition triggered or scent map panic")
 	}
 
-	if _, exists := intents[monster.Id]; !exists {
+	if !hasIntentForActor(intents, monster.Id) {
 		t.Errorf("Expected an intent for wandering monster, got none")
 	}
 }
@@ -253,7 +262,7 @@ func TestMonsterControllerTickWanderNoTransitionProducesIntent(t *testing.T) {
 // transition back to BehaviorWander. Same infinite-loop bug applies: monster.State
 // is never updated, so the transition fires on every loop iteration.
 func TestMonsterControllerTickChaseToWanderTransitionLoopsForever(t *testing.T) {
-	play := model.NewPlaythrough(0, 0, 0)
+	play := model.NewPlaythrough("", 0, 0)
 	play.Map = buildMonsterTestMap()
 
 	// Player far from monster: dist > 1.5*hostility(3) = 4.5.
@@ -292,7 +301,7 @@ func TestMonsterControllerTickChaseToWanderTransitionLoopsForever(t *testing.T) 
 //
 
 func TestMonsterControllerTickNoMonstersReturnsEmptyIntents(t *testing.T) {
-	play := model.NewPlaythrough(0, 0, 0)
+	play := model.NewPlaythrough("", 0, 0)
 	play.Map = buildMonsterTestMap()
 
 	player := model.NewDefaultPlayer(1, geometry.Point{X: 2, Y: 2}, 9)
@@ -315,13 +324,8 @@ func TestMonsterControllerTickNoMonstersReturnsEmptyIntents(t *testing.T) {
 //
 //
 
-// Tick sorts monsters by dexterity using a comparator that returns 1 when
-// a.Dex > b.Dex. This produces ascending order (lower dexterity acts first).
-// In a typical turn-based game, higher dexterity should act first (descending).
-// This test documents the ascending order as the current (potentially buggy)
-// behavior: a slow zombie acts before a fast one.
 func TestMonsterControllerTickSortDescendingByDexterity(t *testing.T) {
-	play := model.NewPlaythrough(0, 0, 0)
+	play := model.NewPlaythrough("", 0, 0)
 	play.Map = buildMonsterTestMap()
 
 	// Player far away so no transitions fire.
@@ -346,7 +350,7 @@ func TestMonsterControllerTickSortDescendingByDexterity(t *testing.T) {
 	ctx := model.NewSessionContext(play)
 
 	done := make(chan struct{})
-	var intents map[model.ActorId]*model.Intent
+	var intents []*model.Intent
 	go func() {
 		defer close(done)
 		intents = ctrl.Tick(ctx)
@@ -359,16 +363,10 @@ func TestMonsterControllerTickSortDescendingByDexterity(t *testing.T) {
 	}
 
 	// Both monsters must produce intents regardless of sort order.
-	if _, exists := intents[slowMonster.Id]; !exists {
+	if !hasIntentForActor(intents, slowMonster.Id) {
 		t.Errorf("Expected intent for slow monster")
 	}
-	if _, exists := intents[fastMonster.Id]; !exists {
+	if !hasIntentForActor(intents, fastMonster.Id) {
 		t.Errorf("Expected intent for fast monster")
 	}
-
-	// Document: Tick's comparator returns 1 when a.Dex > b.Dex, meaning
-	// higher-dex actors sort to the END of the slice (ascending order).
-	// Expected for correct behavior: higher dex acts first (descending).
-	// If this causes incorrect priority in contested-tile scenarios,
-	// the comparator signs must be swapped.
 }

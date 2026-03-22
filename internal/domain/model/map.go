@@ -284,15 +284,9 @@ func (m *Map) IsWalkable(p geometry.Point) bool {
 	return t != Empty && t != Wall && t != ClosedDoor
 }
 
-// CanMoveTo - returns true if given p is walkable and free of actors
+// CanMoveTo - returns true if given p is walkable and not occupied by an actor.
 func (m *Map) CanMoveTo(p geometry.Point) bool {
-	room, ok := m.GetRoomByPoint(p)
-	if !ok {
-		log.Printf("[WARNING] CanMoveTo: No room found for point %v\n", p)
-		return false
-	}
-	_, acceptActors := room.emptyActorPointsIndex[p]
-	return m.IsWalkable(p) && !m.IsActor(p) && acceptActors
+	return m.IsWalkable(p) && !m.IsActor(p)
 }
 
 // IsItem - returns true if there is an item in given position and point is in bounds.
@@ -363,7 +357,14 @@ func (m *Map) SetActor(p geometry.Point, id int64) bool {
 	}
 
 	m.actorGrid[p.Y][p.X] = id
-	room, _ := m.GetRoomByPoint(p)
+	room, ok := m.GetRoomByPoint(p)
+
+	// Not room: corridor, door etc.
+	if !ok && m.IsWalkable(p) {
+		return true
+	} else if !ok {
+		return false
+	}
 
 	if id == 0 {
 		room.addActorPoint(p)

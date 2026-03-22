@@ -67,4 +67,42 @@ func TestDungeonGeneratorGen(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("Complete Generation Flow", func(t *testing.T) {
+		for i := 0; i < 100; i++ {
+			seed := time.Now().UnixNano() + int64(i)
+			ctx, generator := createDungGenEnv(seed)
+
+			generator.Gen(ctx)
+			m := ctx.Playthrough.Map
+
+			if m == nil || len(m.GetRooms()) == 0 {
+				t.Errorf("Seed %v: Map and rooms should be generated", seed)
+			}
+
+			if m.GetEntranceRoom() == nil || m.GetExitRoom() == nil {
+				t.Errorf("Seed %v: Entrance and Exit rooms should be defined", seed)
+			}
+
+			if len(ctx.Playthrough.Items) == 0 {
+				t.Errorf("Seed %v: Items should be spawned", seed)
+			}
+
+			if len(ctx.Playthrough.Monsters) == 0 {
+				t.Errorf("Seed %v: Monsters should be spawned", seed)
+			}
+
+			for _, player := range ctx.Playthrough.Players {
+				if player.Vitals[model.VitalHP] < 0 {
+					t.Errorf("Seed %v: Player's HP should be restored", seed)
+				}
+				if player.Pos == model.NewInvalidPoint() {
+					t.Errorf("Seed %v: Player's should have valid position", seed)
+				}
+				if !ctx.Playthrough.Map.IsActor(player.Pos) {
+					t.Errorf("Seed %v: Player's should be on the map", seed)
+				}
+			}
+		}
+	})
 }

@@ -52,7 +52,7 @@ func buildItemUsageMap() *model.Map {
 }
 
 func setupItemUsageEnv() (*model.SessionContext, *service.ItemUsage, *model.Actor) {
-	play := model.NewPlaythrough(0, 0, 0)
+	play := model.NewPlaythrough("", 0, 0)
 	play.Map = buildItemUsageMap()
 
 	actor := model.NewDefaultPlayer(1, geometry.Point{X: 2, Y: 2}, 9)

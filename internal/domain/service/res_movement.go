@@ -18,6 +18,9 @@ func NewMoveResolverService() *MoveResolver {
 }
 
 func (m *MoveResolver) RegisterAll() {
+	if m.handlers == nil {
+		m.handlers = make([]ActionHandler, 0)
+	}
 	m.RegisterHandler(&AttackHandler{})
 	m.RegisterHandler(&DoorBumpHandler{})
 	m.RegisterHandler(&MoveHandler{})
@@ -84,7 +87,7 @@ type MoveHandler struct{}
 func (m *MoveHandler) Handle(play *model.Playthrough, actor *model.Actor, vector geometry.Point) (*model.Intent, bool) {
 	// Primitive check for tile walkability
 	// All needed checks should be in movement service
-	if play.Map.CanMoveTo(actor.Pos.Add(vector)) {
+	if actor.CanMove() && play.Map.IsWalkable(actor.Pos.Add(vector)) {
 		return &model.Intent{
 				IntentType: model.IntentMove,
 				Actor:      actor.Id,

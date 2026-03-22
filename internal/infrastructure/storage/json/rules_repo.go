@@ -14,6 +14,11 @@ type JsonRulesRepo struct {
 	folder string
 }
 
+func NewJsonRulesRepo(folder string) *JsonRulesRepo {
+	os.MkdirAll(folder, 0o755)
+	return &JsonRulesRepo{folder: folder}
+}
+
 func (r *JsonRulesRepo) Get(id model.RulesId) (*model.GameRules, error) {
 	data, err := os.ReadFile(fmt.Sprintf("%s/rules_%d.json", r.folder, id))
 	if err != nil {

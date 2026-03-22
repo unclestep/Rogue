@@ -46,6 +46,21 @@ func (event *ItemUsageEvent) Perform(ctx *model.SessionContext) {
 
 	if event.RetrievedItem != nil {
 		actor.Backpack.RetrieveById(event.RetrievedItem.Id)
+
+		// Track consumable usage stats. ItemToEquip being set means this is an
+		// equip action (weapon), not an actual consumption — skip those.
+		if event.ItemToEquip == nil {
+			if stats, ok := ctx.Playthrough.PlayersStats[actor.Id]; ok {
+				switch event.RetrievedItem.Kind {
+				case model.ItemTypeFood:
+					stats.FoodConsumed++
+				case model.ItemTypeElixir:
+					stats.ElixirsDrunk++
+				case model.ItemTypeScroll:
+					stats.ScrollsRead++
+				}
+			}
+		}
 	}
 
 	if event.ItemToEquip != nil {

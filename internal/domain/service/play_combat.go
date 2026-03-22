@@ -118,7 +118,11 @@ func (event *AttackEvent) calcHitChance() int {
 	attackerChance := attacker.Actor.DerivedAttrs[model.AttrDexterity]
 	defenderChance := defender.Actor.DerivedAttrs[model.AttrDexterity]
 
-	return attackerChance / (attackerChance + defenderChance) * 100
+	total := attackerChance + defenderChance
+	if total == 0 {
+		return 50
+	}
+	return attackerChance * 100 / total
 }
 
 func (event *AttackEvent) WasPerformed() bool {
@@ -135,6 +139,25 @@ func (event *AttackEvent) Perform(ctx *model.SessionContext) {
 
 	attacker := event.Attacker.Actor
 	defender := event.Defender.Actor
+
+	// Track combat statistics only for successful hits.
+	// We check IsMonster BEFORE KillActor because that call moves the defender
+	// out of the Monsters map into DeadMonsters.
+	if event.Outcome == AttackOutcomeSuccess {
+		if stats, ok := ctx.Playthrough.PlayersStats[attacker.Id]; ok {
+			stats.HitsDealt++
+		}
+		if stats, ok := ctx.Playthrough.PlayersStats[defender.Id]; ok {
+			stats.HitsReceived++
+		}
+		if defender.Vitals[model.VitalHP] <= 0 &&
+			ctx.Playthrough.IsPlayer(attacker.Id) &&
+			ctx.Playthrough.IsMonster(defender.Id) {
+			if stats, ok := ctx.Playthrough.PlayersStats[attacker.Id]; ok {
+				stats.MonstersDefeated++
+			}
+		}
+	}
 
 	// Attacker can be killed by defender in different situations: effects, counter-attacks, special gear
 	if attacker.Vitals[model.VitalHP] <= 0 {

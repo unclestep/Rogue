@@ -131,6 +131,6 @@ func (p Point) Normalize() Point {
 	return norm
 }
 
-func (p *Point) String() string {
+func (p Point) String() string {
 	return fmt.Sprintf("(%v, %v)", p.X, p.Y)
 }

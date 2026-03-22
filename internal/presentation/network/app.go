@@ -1,44 +1,32 @@
-// Temporary application which unites client and server in one executable
-package app
+package network
 
 import (
-	"github.com/google/uuid"
-	"github.com/unclestep/Rogue/internal/dto"
+	"github.com/unclestep/Rogue/internal/presentation/tui"
 )
 
 type App struct {
-	ToClient   chan dto.WorldInfo
-	FromClient chan dto.Command
-	Client     *Client
-	Server     *Server
+	server *Server
+	client *Client
 }
 
-func NewApp() *App {
-	toClient := make(chan dto.WorldInfo)
-	fromClient := make(chan dto.Command)
-
+func NewApp(server *Server, client *Client) *App {
 	return &App{
-		ToClient:   toClient,
-		FromClient: fromClient,
-		Client:     NewClient(fromClient, toClient),
-		Server:     NewServer(fromClient, toClient),
+		server: server,
+		client: client,
 	}
 }
 
 func (a *App) Run() {
-	go a.Server.Listen()
+	a.server.Listen()
 
-	a.FromClient <- dto.Command{
-		CommandType: dto.CommandJoin,
-		PlayerUUID:  a.Client.Uuid,
-	}
+	toClient := a.server.Subscribe(a.client.Uuid)
+	fromClient := a.server.CommandChan()
 
-	a.Client.Ui.Run()
+	// The menu is responsible for sending the initial ActionJoin command;
+	// the app does not auto-join so the player sees the main menu first.
+	ui := tui.NewUIModel(fromClient, toClient, a.client.Uuid, a.client.LastPlaythroughId)
+	a.client.LastPlaythroughId = ui.Run()
 
-	a.SaveGame()
-}
-
-func (a *App) SaveGame() {
-	a.Client.Save()
-	a.Server.Save()
+	a.server.Stop()
+	a.client.Save()
 }

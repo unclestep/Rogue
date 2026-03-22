@@ -792,27 +792,32 @@ func NewDefaultMimic(id ActorId, pos geometry.Point) *Actor {
 	}
 
 	a.Effects[EffectSleep] = &Effect{
-		Kind:      EffectSleep,
-		Duration:  -1,
-		Charges:   1,
+		Kind:     EffectSleep,
+		Duration: -1,
+		Charges:  1,
+		StatusesChange: map[StatusType]int{
+			StatusSleep: 1,
+		},
 		ConsumeOn: TriggerOnDamage,
 		Procs: map[TriggerType][]*Reaction{
 			TriggerOnDamage: {
 				{
 					Trigger: TriggerOnDamage,
 					Target:  TargetOpponent,
+					Chance:  Guaranteed,
 					VitalsChange: map[VitalType]Change{
 						VitalHP: {
 							Holder: TargetOpponent,
 							Vital:  VitalHP,
-							Amount: -1,
-							Scale:  1,
+							Amount: 1,
+							Scale:  -1,
 						},
 					},
 				},
 			},
 		},
 	}
+	a.RecomputeStats()
 
 	return a
 }

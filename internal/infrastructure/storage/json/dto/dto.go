@@ -1,7 +1,7 @@
 package dto
 
 type Playthrough struct {
-	PlaythroughId       int64                      `json:"playthrough_id"`
+	PlaythroughId       string                     `json:"playthrough_id"`
 	HostId              int64                      `json:"host_id"`
 	RulesId             int64                      `json:"rules_id"`
 	Map                 *MapDTO                    `json:"map"`
@@ -55,7 +55,7 @@ type DoorMetadataDTO struct {
 	KeyPos  PointDTO `json:"key_pos"` // Position of key which opens this door
 }
 
-type PlaythroughId int
+type PlaythroughId = string
 
 type GameStatsDTO struct {
 	// Main statistics

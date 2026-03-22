@@ -79,7 +79,7 @@ func buildInteractMap() *model.Map {
 }
 
 func setupInteractEnv() (*model.SessionContext, *service.Interactor, *model.Actor) {
-	play := model.NewPlaythrough(0, 0, 0)
+	play := model.NewPlaythrough("", 0, 0)
 	play.Map = buildInteractMap()
 
 	actor := model.NewDefaultPlayer(1, interactPlayerPos, 9)

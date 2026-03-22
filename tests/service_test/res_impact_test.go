@@ -22,14 +22,14 @@ func newDeterministicRng() *rand.Rand {
 }
 
 func setupImpactPlayer() (*model.Playthrough, *model.Actor) {
-	play := model.NewPlaythrough(0, 0, 0)
+	play := model.NewPlaythrough("", 0, 0)
 	actor := model.NewDefaultPlayer(1, geometry.Point{X: 5, Y: 5}, 9)
 	play.Players[actor.Id] = actor
 	return play, actor
 }
 
 func setupImpactMonsterWithMap() (*model.SessionContext, *model.Actor) {
-	play := model.NewPlaythrough(0, 0, 0)
+	play := model.NewPlaythrough("", 0, 0)
 
 	grid := make([][]model.Cell, 5)
 	for i := range grid {

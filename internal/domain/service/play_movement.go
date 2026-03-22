@@ -72,6 +72,13 @@ func (event *MoveEvent) Perform(ctx *model.SessionContext) {
 	newPos := mover.Pos
 	ctx.Playthrough.Map.Move(oldPos, newPos)
 
+	// Count every successful step for player statistics.
+	if ctx.Playthrough.IsPlayer(mover.Id) {
+		if stats, ok := ctx.Playthrough.PlayersStats[mover.Id]; ok {
+			stats.TilesTraveled++
+		}
+	}
+
 	if newPos == ctx.Playthrough.Map.ExitPoint {
 		if ctx.Playthrough.IsPlayer(event.Mover.Actor.Id) {
 			ctx.Playthrough.HidePlayer(event.Mover.Actor.Id)

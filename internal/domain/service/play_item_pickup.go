@@ -66,4 +66,12 @@ func (event *ItemPickupEvent) Perform(ctx *model.SessionContext) {
 
 	ctx.Playthrough.RemoveItem(event.PickupItem)
 	event.Actor.Actor.Backpack.Add(event.PickupItem)
+
+	// Accumulate treasure value in player statistics.
+	if event.PickupItem.Kind == model.ItemTypeTreasure {
+		actor := event.Actor.Actor
+		if stats, ok := ctx.Playthrough.PlayersStats[actor.Id]; ok {
+			stats.TotalTreasure += event.PickupItem.Value
+		}
+	}
 }

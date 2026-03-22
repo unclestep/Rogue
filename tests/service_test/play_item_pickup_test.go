@@ -15,7 +15,7 @@ import (
 //
 
 func setupPickupEnv() (*model.SessionContext, *service.Pickup, *model.Actor) {
-	play := model.NewPlaythrough(0, 0, 0)
+	play := model.NewPlaythrough("", 0, 0)
 	actor := model.NewDefaultPlayer(1, geometry.Point{X: 0, Y: 0}, 9)
 	play.Players[actor.Id] = actor
 

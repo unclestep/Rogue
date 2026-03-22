@@ -5,12 +5,28 @@ package dto
 // And raw data for more advance processing
 
 type GameView struct {
-	Height int       `json:"height"`
-	Width  int       `json:"width"`
-	Grid   [][]*Cell `json:"grid"`
-	State  GameState `json:"state"`
-	Player *Player   `json:"player"`
-	Events []*Event  `json:"events"`
+	PlaythroughId string             `json:"playthrough_id"`
+	Height        int                `json:"height"`
+	Width         int                `json:"width"`
+	Grid          [][]*Cell          `json:"grid"`
+	State         GameState          `json:"state"`
+	Player        *Player            `json:"player"`
+	Events        []*Event           `json:"events"`
+	LobbyPlayers  []LobbyPlayer      `json:"lobby_players,omitempty"` // Populated in lobby state only.
+	Leaderboard   []LeaderboardEntry `json:"leaderboard,omitempty"`   // All players sorted by TotalTreasure.
+}
+
+// LobbyPlayer is a lightweight entry shown in the lobby player list.
+type LobbyPlayer struct {
+	IsHost   bool   `json:"is_host"`
+	Nickname string `json:"nickname"` // display name chosen by the player
+}
+
+// LeaderboardEntry is one row in the in-game leaderboard.
+type LeaderboardEntry struct {
+	Nickname      string `json:"nickname"`
+	TotalTreasure int    `json:"total_treasure"`
+	DeepestLevel  int    `json:"deepest_level"`
 }
 
 type GameState int
@@ -35,11 +51,13 @@ const (
 	EventMove       EventType = 2
 	EventItemPickup EventType = 3
 	EventItemUsage  EventType = 4
+	EventWait       EventType = 5
 )
 
 type Cell struct {
 	VisibilityState VisibilityState `json:"visibility_state"` // Unexplored, visible, explored
 	TopologyType    TopologyType    `json:"topology_type"`    // Empty, floor, wall etc.
+	DoorKeyhole     Keyhole         `json:"door_keyhole"`     // Non-zero for locked doors; used for color-coding
 	Actor           *Actor          `json:"actor"`            // Must be nil if cell is hidden
 	Item            *Item           `json:"item"`             // Must be nil if cell is hidden
 }
@@ -132,6 +150,9 @@ type Player struct {
 	RunStats  *RunStats            `json:"run_stats"`
 	Inventory map[ItemType][]*Item `json:"inventory"` // Stores item type as key and slice of IDs
 	Equipped  map[ItemType]*Item   `json:"equipped"`
+	IsHost    bool                 `json:"is_host"`
+	Row       int                  `json:"row"` // Player row in the Grid (actor.Pos.Y)
+	Col       int                  `json:"col"` // Player column in the Grid (actor.Pos.X)
 }
 
 type Item struct {

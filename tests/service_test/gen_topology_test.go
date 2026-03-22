@@ -11,7 +11,7 @@ import (
 )
 
 func createTestContext(seed int64) *model.SessionContext {
-	playthrough := model.NewPlaythrough(1, 1, seed)
+	playthrough := model.NewPlaythrough("test-1", 1, seed)
 	playthrough.Map = &model.Map{}
 	return model.NewSessionContext(playthrough)
 }

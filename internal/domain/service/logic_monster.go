@@ -42,13 +42,13 @@ type Transition struct {
 	TargetState model.BehaviorType
 }
 
-func (m *MonsterController) Tick(ctx *model.SessionContext) map[model.ActorId]*model.Intent {
+func (m *MonsterController) Tick(ctx *model.SessionContext) []*model.Intent {
 	monsters := conv.MapValsToSlice(ctx.Playthrough.Monsters)
 	slices.SortFunc(monsters, func(a, b *model.Actor) int {
 		return cmp.Compare(b.DerivedAttrs[model.AttrDexterity], a.DerivedAttrs[model.AttrDexterity])
 	})
 
-	intents := make(map[model.ActorId]*model.Intent, len(monsters))
+	intents := make([]*model.Intent, 0, len(monsters))
 
 	for _, monster := range monsters {
 		if monster.Vitals[model.VitalHP] <= 0 {
@@ -56,28 +56,65 @@ func (m *MonsterController) Tick(ctx *model.SessionContext) map[model.ActorId]*m
 			continue
 		}
 
+		if !monster.CanMove() {
+			continue
+		}
+
 		// Handle chain of transitions
-		for {
+		originalPos := monster.Pos
+		virtualStamina := monster.Vitals[model.VitalStamina]
+		for IsStaminaEnough(virtualStamina, monster) {
 			initState := monster.State
 			behavior, ok := m.behaviors[initState]
 			if !ok {
 				log.Fatalf("Unrecognized monster behavior: %v", initState)
 			}
-			nextState, decision := behavior.Update(ctx, monster)
 
+			nextState, decision := behavior.Update(ctx, monster)
 			if decision != nil {
 				intent := m.moveResolver.Resolve(ctx.Playthrough, monster, decision.MoveVector)
-				intents[monster.Id] = intent
-			}
+				if intent == nil {
+					break
+				}
+				intents = append(intents, intent)
+				virtualStamina -= calcStaminaCost(intent, monster)
 
-			if nextState == initState {
-				break
+				// Advance position for next pathfinding iteration so multi-step
+				// movement (e.g. Ogre with high stamina) calculates from the new pos.
+				if intent.IntentType == model.IntentMove {
+					monster.Pos = monster.Pos.Add(intent.Vector)
+				}
 			}
 			monster.State = nextState
 		}
+		// Restore original position — actual movement happens in processIntents.
+		monster.Pos = originalPos
 	}
 
 	return intents
+}
+
+func IsStaminaEnough(virtualStamina int, a *model.Actor) bool {
+	return virtualStamina >= a.DerivedAttrs[model.AttrMoveStaminaCost] ||
+		virtualStamina >= a.DerivedAttrs[model.AttrAttackStaminaCost] ||
+		virtualStamina >= a.DerivedAttrs[model.AttrActionStaminaCost]
+}
+
+func calcStaminaCost(intent *model.Intent, a *model.Actor) int {
+	if intent == nil {
+		return 0
+	}
+
+	switch intent.IntentType {
+	case model.IntentAttack:
+		return a.DerivedAttrs[model.AttrAttackStaminaCost]
+	case model.IntentMove:
+		return a.DerivedAttrs[model.AttrMoveStaminaCost]
+	case model.IntentConsume, model.IntentEquip, model.IntentUnequip:
+		return a.DerivedAttrs[model.AttrActionStaminaCost]
+	default:
+		return 0
+	}
 }
 
 type WanderBehavior struct {

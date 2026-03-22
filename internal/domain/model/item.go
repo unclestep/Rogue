@@ -73,7 +73,9 @@ func (i *Item) Clone() *Item {
 	return &Item{
 		Id:              i.Id,
 		Kind:            i.Kind,
+		Label:           i.Label,
 		Pos:             i.Pos,
+		Keyhole:         i.Keyhole,
 		Value:           i.Value,
 		VitalsChange:    maps.Clone(i.VitalsChange),
 		BaseAttrsChange: maps.Clone(i.BaseAttrsChange),
@@ -244,9 +246,10 @@ func NewDefaultDexterityScroll(id ItemId, pos geometry.Point) *Item {
 
 func NewDefaultStrengthScroll(id ItemId, pos geometry.Point) *Item {
 	return &Item{
-		Id:   id,
-		Pos:  pos,
-		Kind: ItemTypeScroll,
+		Id:    id,
+		Pos:   pos,
+		Kind:  ItemTypeScroll,
+		Label: ItemLabelStrengthScroll,
 		BaseAttrsChange: map[AttrType]int{
 			AttrStrength: 5,
 		},
@@ -255,9 +258,10 @@ func NewDefaultStrengthScroll(id ItemId, pos geometry.Point) *Item {
 
 func NewDefaultMaxHpScroll(id ItemId, pos geometry.Point) *Item {
 	return &Item{
-		Id:   id,
-		Pos:  pos,
-		Kind: ItemTypeScroll,
+		Id:    id,
+		Pos:   pos,
+		Kind:  ItemTypeScroll,
+		Label: ItemLabelMaxHpScroll,
 		BaseAttrsChange: map[AttrType]int{
 			AttrMaxHP: 10,
 		},
@@ -270,9 +274,10 @@ func NewDefaultMaxHpScroll(id ItemId, pos geometry.Point) *Item {
 
 func NewDefaultWeapon(id ItemId, pos geometry.Point) *Item {
 	return &Item{
-		Id:   id,
-		Pos:  pos,
-		Kind: ItemTypeWeapon,
+		Id:    id,
+		Pos:   pos,
+		Kind:  ItemTypeWeapon,
+		Label: ItemLabelDefaultWeapon,
 		Effects: map[EffectType]*Effect{
 			EffectWeaponDefault: {
 				Kind:     EffectWeaponDefault,
