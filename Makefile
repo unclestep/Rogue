@@ -19,7 +19,7 @@ arch = $(word 2, $(temp))
 # -X 'main.Version=$(VERSION)'
 LDFLAGS=-ldflags="-s -w"
 
-.PHONY: all build release clean run
+.PHONY: all build release clean run dump-topologies
 
 all: fmt lint test build
 
@@ -27,7 +27,12 @@ run:
 	$(CC) run $(CMD)
 
 test:
-	$(CC) test ./... 
+	$(CC) test ./...
+
+# Dumps 1000 procedurally-generated dungeons as JSON into rl/topologies/ for the
+# Python Pursuer training loop. Re-run whenever the TopologyGenerator changes.
+dump-topologies:
+	$(CC) run ./cmd/dump-topology -n 1000 -out rl/topologies
 
 build: $(PLATFORMS)
 

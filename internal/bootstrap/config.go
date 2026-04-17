@@ -5,4 +5,9 @@ package bootstrap
 type Config struct {
 	PlaythroughsDir string
 	RulesDir        string
+
+	// PursuerModelPath points at a trained ONNX policy for the Pursuer
+	// monster. Empty string disables ONNX and uses FallbackPolicy (the
+	// scent-gradient chase). See providePursuerPolicy in providers.go.
+	PursuerModelPath string
 }
