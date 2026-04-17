@@ -19,7 +19,7 @@ arch = $(word 2, $(temp))
 # -X 'main.Version=$(VERSION)'
 LDFLAGS=-ldflags="-s -w"
 
-.PHONY: all build release clean run dump-topologies
+.PHONY: all build release clean run dump-topologies run-notebook test-rl
 
 all: fmt lint test build
 
@@ -33,6 +33,15 @@ test:
 # Python Pursuer training loop. Re-run whenever the TopologyGenerator changes.
 dump-topologies:
 	$(CC) run ./cmd/dump-topology -n 1000 -out rl/topologies
+
+# Opens the Pursuer training notebook in local Jupyter.
+run-notebook:
+	jupyter lab rl/pursuer_training.ipynb
+
+# Runs the Python-side observation/raycaster parity tests. Requires
+# `pip install -r rl/requirements.txt` (at least gymnasium + numpy + pytest).
+test-rl:
+	python -m pytest rl/tests -q
 
 build: $(PLATFORMS)
 

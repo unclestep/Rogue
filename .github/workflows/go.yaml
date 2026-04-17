@@ -34,5 +34,10 @@ jobs:
           cache: true
       - name: Build
         run: go build -v -o ./bin/gouge ./cmd/main.go
-      - name: Test 
+      - name: Install ONNX Runtime
+        run: |
+          ORT_VERSION=1.23.0
+          curl -sSL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz" | tar -xz -C /tmp
+          echo "ROGUE_ONNX_LIB_PATH=/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so" >> "$GITHUB_ENV"
+      - name: Test
         run: go test -v ./...
