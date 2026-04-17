@@ -31,6 +31,7 @@ func buildResolveTurn(playRepo port.PlaythroughRepository, rulesRepo port.RulesR
 	pickup := service.NewPickupService()
 	pathfinder := service.NewPathfinderService()
 	moveResolver := service.NewMoveResolverService()
+	raycaster := service.NewRaycaster()
 
 	return usecase.NewResolveTurn(
 		playRepo, rulesRepo,
@@ -40,8 +41,8 @@ func buildResolveTurn(playRepo port.PlaythroughRepository, rulesRepo port.RulesR
 		service.NewCombatService(impactRes),
 		service.NewMovementService(impactRes, pickup),
 		pathfinder, moveResolver,
-		service.NewMonsterControllerService(pathfinder, moveResolver),
-		service.NewRaycaster(),
+		service.NewMonsterControllerService(pathfinder, moveResolver, raycaster, service.NewFallbackPolicy(pathfinder)),
+		raycaster,
 		service.NewTopologyGenerator(),
 		service.NewDoorLocker(),
 	)

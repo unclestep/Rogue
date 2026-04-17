@@ -30,6 +30,7 @@ func setupServer(t *testing.T) (*network.Server, func()) {
 	pickup := service.NewPickupService()
 	pathfinder := service.NewPathfinderService()
 	moveResolver := service.NewMoveResolverService()
+	raycaster := service.NewRaycaster()
 
 	resolveTurn := usecase.NewResolveTurn(
 		playRepo, rulesRepo,
@@ -39,8 +40,8 @@ func setupServer(t *testing.T) (*network.Server, func()) {
 		service.NewCombatService(impactRes),
 		service.NewMovementService(impactRes, pickup),
 		pathfinder, moveResolver,
-		service.NewMonsterControllerService(pathfinder, moveResolver),
-		service.NewRaycaster(),
+		service.NewMonsterControllerService(pathfinder, moveResolver, raycaster, service.NewFallbackPolicy(pathfinder)),
+		raycaster,
 		service.NewTopologyGenerator(),
 		service.NewDoorLocker(),
 	)

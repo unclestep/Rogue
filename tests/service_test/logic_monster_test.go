@@ -62,9 +62,17 @@ func hasIntentForActor(intents []*model.Intent, actorId model.ActorId) bool {
 }
 
 func newMonsterController() *service.MonsterController {
+	return newMonsterControllerWithPolicy(nil)
+}
+
+func newMonsterControllerWithPolicy(policy service.Policy) *service.MonsterController {
 	pathfinder := service.NewPathfinderService()
 	resolver := service.NewMoveResolverService()
-	return service.NewMonsterControllerService(pathfinder, resolver)
+	raycaster := service.NewRaycaster()
+	if policy == nil {
+		policy = service.NewFallbackPolicy(pathfinder)
+	}
+	return service.NewMonsterControllerService(pathfinder, resolver, raycaster, policy)
 }
 
 //

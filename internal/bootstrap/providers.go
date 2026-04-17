@@ -50,4 +50,7 @@ var ServicesSet = wire.NewSet(
 	service.NewMonsterControllerService,
 	service.NewTopologyGenerator,
 	service.NewDoorLocker,
+	service.NewRaycaster,
+	service.NewFallbackPolicy,
+	wire.Bind(new(service.Policy), new(*service.FallbackPolicy)),
 )

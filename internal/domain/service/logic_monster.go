@@ -15,20 +15,24 @@ type MonsterController struct {
 	moveResolver *MoveResolver
 }
 
-func NewMonsterControllerService(pathfinder *Pathfinder, moveResolver *MoveResolver) *MonsterController {
+func NewMonsterControllerService(
+	pathfinder *Pathfinder,
+	moveResolver *MoveResolver,
+	raycaster *Raycaster,
+	pursuerPolicy Policy,
+) *MonsterController {
 	ctrl := &MonsterController{
 		behaviors:    make(map[model.BehaviorType]MonsterBehavior),
 		moveResolver: moveResolver,
 	}
-	ctrl.RegisterBehaviors(pathfinder)
+	ctrl.RegisterBehaviors(pathfinder, raycaster, pursuerPolicy)
 	return ctrl
 }
 
-func (m *MonsterController) RegisterBehaviors(pathfinder *Pathfinder) {
-	chase := NewChaseBehavior(pathfinder)
+func (m *MonsterController) RegisterBehaviors(pathfinder *Pathfinder, raycaster *Raycaster, pursuerPolicy Policy) {
 	m.behaviors[model.BehaviorWander] = NewWanderBehavior(pathfinder)
-	m.behaviors[model.BehaviorChase] = chase
-	m.behaviors[model.BehaviorPursuer] = chase
+	m.behaviors[model.BehaviorChase] = NewChaseBehavior(pathfinder)
+	m.behaviors[model.BehaviorPursuer] = NewPursuerBehavior(raycaster, pursuerPolicy)
 }
 
 type MonsterBehavior interface {
