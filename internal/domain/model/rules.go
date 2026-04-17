@@ -126,6 +126,7 @@ func createDefaultActorsConf() map[ActorLabel]*Actor {
 		ActorLabelOgreCommon:      NewDefaultOgre(0, NewInvalidPoint()),
 		ActorLabelSnakeMageCommon: NewDefaultSnakeMage(0, NewInvalidPoint()),
 		ActorLabelMimicCommon:     NewDefaultMimic(0, NewInvalidPoint()),
+		ActorLabelPursuerCommon:   NewDefaultPursuer(0, NewInvalidPoint()),
 	}
 }
 
@@ -160,6 +161,7 @@ func createDefaultStartGenParams() *DungParams {
 			ActorLabelOgreCommon:      15,
 			ActorLabelSnakeMageCommon: 15,
 			ActorLabelMimicCommon:     5,
+			ActorLabelPursuerCommon:   10,
 		},
 		MonsterStatsMultiplier: 1.0,
 		MaxItems:               7,
@@ -192,6 +194,7 @@ func createDefaultEndGenParams() *DungParams {
 			ActorLabelOgreCommon:      25,
 			ActorLabelSnakeMageCommon: 20,
 			ActorLabelMimicCommon:     5,
+			ActorLabelPursuerCommon:   20,
 		},
 		MonsterStatsMultiplier: 2.0,
 		MaxItems:               3,

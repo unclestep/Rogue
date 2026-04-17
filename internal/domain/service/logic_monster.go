@@ -25,8 +25,10 @@ func NewMonsterControllerService(pathfinder *Pathfinder, moveResolver *MoveResol
 }
 
 func (m *MonsterController) RegisterBehaviors(pathfinder *Pathfinder) {
+	chase := NewChaseBehavior(pathfinder)
 	m.behaviors[model.BehaviorWander] = NewWanderBehavior(pathfinder)
-	m.behaviors[model.BehaviorChase] = NewChaseBehavior(pathfinder)
+	m.behaviors[model.BehaviorChase] = chase
+	m.behaviors[model.BehaviorPursuer] = chase
 }
 
 type MonsterBehavior interface {

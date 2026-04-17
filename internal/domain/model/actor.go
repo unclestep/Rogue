@@ -43,6 +43,7 @@ const (
 	ActorOgre      ActorType = "ogre"
 	ActorSnakeMage ActorType = "snake_mage"
 	ActorMimic     ActorType = "mimic"
+	ActorPursuer   ActorType = "pursuer"
 )
 
 type ActorLabel string
@@ -56,6 +57,7 @@ const (
 	ActorLabelOgreCommon      ActorLabel = "ogre_common"
 	ActorLabelSnakeMageCommon ActorLabel = "snake_mage_common"
 	ActorLabelMimicCommon     ActorLabel = "mimic_common"
+	ActorLabelPursuerCommon   ActorLabel = "pursuer_common"
 )
 
 //
@@ -227,6 +229,7 @@ type BehaviorType int
 const (
 	BehaviorWander BehaviorType = iota
 	BehaviorChase
+	BehaviorPursuer
 )
 
 //
@@ -826,4 +829,43 @@ func NewCustomMimic(id ActorId, pos geometry.Point, difficulty float64) *Actor {
 	m := NewDefaultMimic(id, pos)
 	AdjustStatsByDifficulty(m, difficulty)
 	return m
+}
+
+//
+// -- PURSUER --
+//
+
+var PursuerDefault = AttrConf{
+	MaxHealth:           MediumHealth,
+	MaxStamina:          MediumStamina,
+	AttackStaminaCost:   MediumAttackStaminaCost,
+	MoveStaminaCost:     MediumMoveStaminaCost,
+	ActionStaminaCost:   MediumActionStaminaCost,
+	StaminaRegen:        MediumStamina,
+	Strength:            MediumStrength,
+	Dexterity:           HighChance,
+	Hostility:           HighHostility,
+	CounterAttackChance: MediumChance,
+}
+
+func NewDefaultPursuer(id ActorId, pos geometry.Point) *Actor {
+	return &Actor{
+		Id:           id,
+		Kind:         ActorPursuer,
+		MovePattern:  MovePatternDefault,
+		Pos:          pos,
+		Vitals:       NewVitals(PursuerDefault.MaxHealth, PursuerDefault.MaxStamina),
+		BaseAttrs:    NewAttrs(&PursuerDefault),
+		DerivedAttrs: NewAttrs(&PursuerDefault),
+		Statuses:     make(map[StatusType]int),
+		Effects:      make(map[EffectType]*Effect),
+		Traits:       make(map[TriggerType][]*Reaction),
+		State:        BehaviorPursuer,
+	}
+}
+
+func NewCustomPursuer(id ActorId, pos geometry.Point, difficulty float64) *Actor {
+	p := NewDefaultPursuer(id, pos)
+	AdjustStatsByDifficulty(p, difficulty)
+	return p
 }
