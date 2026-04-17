@@ -24,17 +24,30 @@ import math
 import random
 from typing import TYPE_CHECKING
 
-from .pursuer_env import (
-    ACTION_DOWN,
-    ACTION_LEFT,
-    ACTION_RIGHT,
-    ACTION_UP,
-    ACTION_VECTORS,
-    ACTION_WAIT,
-)
+try:
+    from .pursuer_env import (
+        ACTION_DOWN,
+        ACTION_LEFT,
+        ACTION_RIGHT,
+        ACTION_UP,
+        ACTION_VECTORS,
+        ACTION_WAIT,
+    )
+except ImportError:  # Colab: %%writefile drops us as a top-level module
+    from pursuer_env import (
+        ACTION_DOWN,
+        ACTION_LEFT,
+        ACTION_RIGHT,
+        ACTION_UP,
+        ACTION_VECTORS,
+        ACTION_WAIT,
+    )
 
 if TYPE_CHECKING:
-    from .pursuer_env import PursuerEnv
+    try:
+        from .pursuer_env import PursuerEnv
+    except ImportError:
+        from pursuer_env import PursuerEnv
 
 CARDINAL_ACTIONS = [ACTION_UP, ACTION_RIGHT, ACTION_DOWN, ACTION_LEFT]
 
