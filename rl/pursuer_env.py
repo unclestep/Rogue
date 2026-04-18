@@ -556,6 +556,10 @@ class PursuerEnv(gym.Env):
         self._exit_scent_cache: Optional[np.ndarray] = None
         self._exit_camp_counter = 0
 
+        self.memory = PursuerMemory()
+        self.step_count = 0
+        self._fixed_profile = "default"
+
     # ------------------------------------------------------------------
     # Gymnasium API.
     # ------------------------------------------------------------------
@@ -590,7 +594,7 @@ class PursuerEnv(gym.Env):
         self.player_profile = (
             self._rng.choice(self.PLAYER_PROFILES)
             if self._randomize_player_profile
-            else "default"
+            else self._fixed_profile
         )
 
         self.distractor_pos = None
@@ -678,6 +682,11 @@ class PursuerEnv(gym.Env):
     # ------------------------------------------------------------------
     # Internals.
     # ------------------------------------------------------------------
+
+    def set_curriculum(self, distractor_prob: float, randomize_profile: bool, fixed_profile: str):
+        self._distractor_prob = float(distractor_prob)
+        self._randomize_player_profile = bool(randomize_profile)
+        self._fixed_profile = fixed_profile
 
     def _place_actors(self) -> tuple[tuple[int, int], tuple[int, int]]:
         """Place player and pursuer in different rooms when possible."""

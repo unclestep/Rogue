@@ -60,6 +60,8 @@ if TYPE_CHECKING:
 CARDINAL_ACTIONS = [ACTION_UP, ACTION_RIGHT, ACTION_DOWN, ACTION_LEFT]
 
 _PROFILES: dict[str, dict[str, float]] = {
+    "training_dummy": {"flee_prob": 0.0,  "wait_prob": 0.85, "goal_prob": 0.15, "panic_boost": 0.0, "angle_jitter": 0.1},
+    
     "default":    {"flee_prob": 0.5,  "wait_prob": 0.1,  "goal_prob": 0.75, "panic_boost": 1.0, "angle_jitter": 0.6},
     "aggressive": {"flee_prob": 0.3,  "wait_prob": 0.02, "goal_prob": 0.55, "panic_boost": 0.8, "angle_jitter": 1.0},
     "cautious":   {"flee_prob": 0.7,  "wait_prob": 0.3,  "goal_prob": 0.85, "panic_boost": 1.0, "angle_jitter": 0.2},
