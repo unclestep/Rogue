@@ -836,13 +836,13 @@ func NewCustomMimic(id ActorId, pos geometry.Point, difficulty float64) *Actor {
 //
 
 var PursuerDefault = AttrConf{
-	MaxHealth:           40,
+	MaxHealth:           MediumHealth,
 	MaxStamina:          MediumStamina,
 	AttackStaminaCost:   MediumAttackStaminaCost,
 	MoveStaminaCost:     MediumMoveStaminaCost,
 	ActionStaminaCost:   MediumActionStaminaCost,
 	StaminaRegen:        MediumStamina,
-	Strength:            50,
+	Strength:            MediumStrength,
 	Dexterity:           HighChance,
 	Hostility:           HighHostility,
 	CounterAttackChance: MediumChance,
