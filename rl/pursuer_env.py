@@ -780,10 +780,10 @@ class PursuerEnv(gym.Env):
         +5   ambush bonus if pursuer wasn't visible to the player last turn
         +20  killed player (episode ends)
         -2   pursuer dies
-        +0.1 * Δscent  potential shaping (closing distance ≈ positive).
-                  Previously 0.01 — too weak to compete with death risk, agent
-                  found "never engage" local optimum. 10× makes approach
-                  worth the risk across a typical episode.
+        +0.1 * Δchebyshev  approach shaping — +0.1 per step closer, −0.1 per
+                  step away. Replaces Dijkstra scent-delta, which mixed Pursuer
+                  and player motion into one noisy signal and let PPO collapse
+                  to "never engage".
         -0.1 * k  per turn camping near exit (k = consecutive turns, resets when
                   leaving the camp zone or when player approaches within 4 tiles —
                   intercepting a fleeing player is legitimate, loitering is not)
@@ -804,12 +804,22 @@ class PursuerEnv(gym.Env):
         if self.pursuer_hp <= 0:
             r -= 2.0
 
-        scent = chase_scent_map(self.topology, self.player_pos)
-        current = int(scent[self.pursuer_pos[1], self.pursuer_pos[0]])
-        if self._prev_scent_val is not None and current < 10**8:
-            delta = self._prev_scent_val - current
-            r += 0.1 * delta
-        self._prev_scent_val = current
+        # Chebyshev-approach shaping. Previously Dijkstra potential shaping
+        # (0.1 * Δscent), but that signal was noisy — it mixed Pursuer motion
+        # with scripted-player motion, so PPO couldn't tell whose move caused
+        # the change. Deterministic chebyshev-delta gives +0.1 per approach
+        # step and -0.1 per retreat step regardless of player motion, which
+        # is the strong exploration gradient PPO needs before it can discover
+        # hits/ambush.
+        prev_dist = max(
+            abs(self.player_pos[0] - prev_pos[0]),
+            abs(self.player_pos[1] - prev_pos[1]),
+        )
+        cur_dist = max(
+            abs(self.player_pos[0] - self.pursuer_pos[0]),
+            abs(self.player_pos[1] - self.pursuer_pos[1]),
+        )
+        r += 0.1 * (prev_dist - cur_dist)
 
         in_cone_now = (
             self._cone_mask_cache is not None
