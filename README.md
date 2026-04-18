@@ -51,9 +51,12 @@ byte-identical tensors. Two checks guard this:
   exported ONNX through 1000 random states and asserts
   `max(abs(diff)) < 1e-5`.
 
-### Benchmarking
+### Evaluation
 
-`cmd/benchmark-pursuer` runs N episodes of a scripted player against
-`FallbackPolicy` (always) and `ONNXPolicy` (if `-onnx` provided), and
-reports catch-rate, hit-rate, ambush%, in-cone%, and turns-to-first-hit.
-Used to decide whether a given checkpoint beats the scent baseline.
+Policy quality is measured in Python — `rl/pursuer_training.ipynb`
+cell 15 rolls out PPO and the scent-chase baseline through the same
+env used for training and prints a comparison table.
+
+`tests/application_test/pursuer_onnx_smoke_test.go` covers the Go side:
+it wires `ONNXPolicy` through `MonsterControllerService` and verifies
+the stack produces valid intents.

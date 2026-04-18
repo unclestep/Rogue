@@ -11,10 +11,10 @@ import (
 //
 // The vector is laid out as [channels... | scalars]:
 //
-//   channels: ObservationChannels × ObservationCropSize × ObservationCropSize
-//             flattened in CHW row-major order
-//             (i.e. obs[c*H*W + y*W + x])
-//   scalars : ObservationScalars floats appended after the channel block
+//	channels: ObservationChannels × ObservationCropSize × ObservationCropSize
+//	          flattened in CHW row-major order
+//	          (i.e. obs[c*H*W + y*W + x])
+//	scalars : ObservationScalars floats appended after the channel block
 //
 // Keep this layout in lock-step with the Python Gymnasium env
 // (rl/pursuer_env.py). Any reordering or resizing breaks paritУ.

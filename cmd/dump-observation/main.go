@@ -37,9 +37,9 @@ type point struct {
 }
 
 type pursuerSpec struct {
-	Pos          point   `json:"pos"`
-	HPFrac       float32 `json:"hp_frac"`
-	StaminaFrac  float32 `json:"stamina_frac"`
+	Pos         point   `json:"pos"`
+	HPFrac      float32 `json:"hp_frac"`
+	StaminaFrac float32 `json:"stamina_frac"`
 }
 
 type playerSpec struct {
@@ -54,11 +54,11 @@ type memorySpec struct {
 }
 
 type scenario struct {
-	Topology       string       `json:"topology"`
-	Pursuer        pursuerSpec  `json:"pursuer"`
-	Player         *playerSpec  `json:"player"`
-	Memory         memorySpec   `json:"memory"`
-	OtherMonsters  []point      `json:"other_monsters"`
+	Topology      string      `json:"topology"`
+	Pursuer       pursuerSpec `json:"pursuer"`
+	Player        *playerSpec `json:"player"`
+	Memory        memorySpec  `json:"memory"`
+	OtherMonsters []point     `json:"other_monsters"`
 }
 
 type output struct {

@@ -7,8 +7,8 @@ import (
 	"os"
 	"sync"
 
-	ort "github.com/yalue/onnxruntime_go"
 	"github.com/unclestep/Rogue/internal/domain/model"
+	ort "github.com/yalue/onnxruntime_go"
 )
 
 // ONNX input/output names produced by rl/pursuer_training.ipynb (PR 4).

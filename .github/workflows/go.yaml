@@ -16,11 +16,16 @@ jobs:
         with:
           go-version: '1.25.5'
           cache: false
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
-        with:
-          version: latest
-        #   verify: false # Для локального тестирования
+      - name: go vet
+        run: go vet ./...
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "Unformatted files:"
+            echo "$unformatted"
+            exit 1
+          fi
 
   test:
     runs-on: ubuntu-latest

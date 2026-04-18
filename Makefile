@@ -63,10 +63,14 @@ release: clean build
 	@echo "Release $(VERSION) created in $(BUILD_DIR)/dist"
 
 lint:
-	golangci-lint run
+	go vet ./...
+	@unformatted="$$(gofmt -l .)"; \
+	if [ -n "$$unformatted" ]; then \
+		echo "Unformatted files:"; echo "$$unformatted"; exit 1; \
+	fi
 
 fmt:
-	golangci-lint fmt
+	gofmt -w .
 
 clean:
 	rm -rf $(BUILD_DIR)

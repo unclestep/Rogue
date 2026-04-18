@@ -789,7 +789,16 @@ class PursuerEnv(gym.Env):
             and self._cone_mask_cache[self.pursuer_pos[1], self.pursuer_pos[0]]
         )
         if in_cone_now:
-            r -= 0.05
+            # Stealth matters while stalking, not in melee: the final 1-2
+            # tiles through the cone are the attack itself. Gating the
+            # penalty by distance prevents the policy from retreating when
+            # adjacent (the failure mode observed at 2M-step eval: 30%
+            # hit-rate vs Fallback's 97%).
+            dist = abs(self.player_pos[0] - self.pursuer_pos[0]) + abs(
+                self.player_pos[1] - self.pursuer_pos[1]
+            )
+            if dist > 2:
+                r -= 0.05
 
         r -= 0.001
         if action == ACTION_WAIT:

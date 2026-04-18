@@ -1,0 +1,33 @@
+{
+  "name": "Rogue RL",
+  "build": { "dockerfile": "Dockerfile" },
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "1.25.5"
+    }
+  },
+  "forwardPorts": [8888, 6006],
+  "portsAttributes": {
+    "8888": { "label": "Jupyter Lab" },
+    "6006": { "label": "TensorBoard" }
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "remoteEnv": {
+    "ROGUE_ONNX_LIB_PATH": "/opt/onnxruntime/lib/libonnxruntime.so",
+    "PYTHONPATH": "${containerWorkspaceFolder}"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.Go",
+        "ms-python.python",
+        "ms-toolsai.jupyter",
+        "ms-toolsai.jupyter-renderers"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "go.toolsManagement.autoUpdate": false
+      }
+    }
+  }
+}
