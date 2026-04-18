@@ -55,11 +55,14 @@ def test_exit_camp_counter_starts_zero_after_reset(topology):
     assert env._exit_camp_counter == 0
 
 
-def test_exit_camp_escalates_when_parked_on_exit(topology):
+def test_exit_camp_flat_penalty_when_parked_on_exit(topology):
+    """Penalty is flat (−0.1) per turn, not escalating. Previously
+    `−0.1 × k` summed to −2010 per 200-step episode (arithmetic progression
+    trap) and dominated every other reward signal.
+    """
     env = _make_env()
     env.reset(seed=12)
 
-    # Place pursuer at the exit, player far away, force both to sit still.
     env.pursuer_pos = env.topology.exit_point
     env.player_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
     env._prev_scent_val = None
@@ -76,9 +79,8 @@ def test_exit_camp_escalates_when_parked_on_exit(topology):
         rewards.append(r)
 
     assert env._exit_camp_counter == 5
-    # Penalty strictly escalates each turn.
     for a, b in zip(rewards, rewards[1:]):
-        assert b < a, f"camp penalty should escalate, got {rewards}"
+        assert abs(a - b) < 1e-6, f"camp penalty must be flat, got {rewards}"
 
 
 def test_exit_camp_resets_when_player_approaches(topology):

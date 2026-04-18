@@ -516,6 +516,7 @@ class PursuerEnv(gym.Env):
         max_episode_steps_range: Optional[tuple[int, int]] = None,
         distractor_prob: float = 0.0,
         randomize_player_profile: bool = False,
+        fixed_profile: str = "default",
     ):
         super().__init__()
         self._topology_paths = sorted(glob.glob(os.path.join(topologies_dir, "*.json")))
@@ -556,9 +557,7 @@ class PursuerEnv(gym.Env):
         self._exit_scent_cache: Optional[np.ndarray] = None
         self._exit_camp_counter = 0
 
-        self.memory = PursuerMemory()
-        self.step_count = 0
-        self._fixed_profile = "default"
+        self._fixed_profile = fixed_profile
 
     # ------------------------------------------------------------------
     # Gymnasium API.
@@ -609,6 +608,29 @@ class PursuerEnv(gym.Env):
             "player_profile": self.player_profile,
             "has_distractor": self.distractor_pos is not None,
             "max_steps": self._max_steps,
+        }
+
+    def set_difficulty(
+        self,
+        *,
+        fixed_profile: Optional[str] = None,
+        distractor_prob: Optional[float] = None,
+        randomize_player_profile: Optional[bool] = None,
+    ) -> dict[str, object]:
+        """Mutate curriculum knobs mid-training. Called from CurriculumCallback
+        via `vec_env.env_method('set_difficulty', ...)` once the agent reaches
+        a threshold on the current stage. Takes effect from the next `reset()`.
+        """
+        if fixed_profile is not None:
+            self._fixed_profile = fixed_profile
+        if distractor_prob is not None:
+            self._distractor_prob = float(distractor_prob)
+        if randomize_player_profile is not None:
+            self._randomize_player_profile = bool(randomize_player_profile)
+        return {
+            "fixed_profile": self._fixed_profile,
+            "distractor_prob": self._distractor_prob,
+            "randomize_player_profile": self._randomize_player_profile,
         }
 
     def step(self, action: int):
@@ -793,9 +815,12 @@ class PursuerEnv(gym.Env):
                   step away. Replaces Dijkstra scent-delta, which mixed Pursuer
                   and player motion into one noisy signal and let PPO collapse
                   to "never engage".
-        -0.1 * k  per turn camping near exit (k = consecutive turns, resets when
-                  leaving the camp zone or when player approaches within 4 tiles —
-                  intercepting a fleeing player is legitimate, loitering is not)
+        -0.1  per turn camping near exit (flat, not escalating). Previously
+                  `-0.1 * k` with cumulative `k` — if the agent ever spawned
+                  near the exit and stalled, the arithmetic-progression sum
+                  hit −2010 per episode and dominated every other signal.
+                  Resets when leaving the camp zone or when player approaches
+                  within 4 tiles — intercepting a fleeing player is legitimate.
         -0.001 per step                (time penalty)
         Wait action:
           -0.1  if in the player's cone (freeze-in-spotlight: worst possible wait)
@@ -860,7 +885,7 @@ class PursuerEnv(gym.Env):
             and dist_to_player > EXIT_CAMP_INTERCEPT_RADIUS
         ):
             self._exit_camp_counter += 1
-            r -= 0.1 * self._exit_camp_counter
+            r -= 0.1
         else:
             self._exit_camp_counter = 0
 
