@@ -508,9 +508,10 @@ class PursuerEnv(gym.Env):
         topologies_dir: str,
         player_policy: PlayerPolicyFn,
         max_episode_steps: int = 200,
-        pursuer_hp: int = 10,
-        player_hp: int = 10,
-        attack_damage: int = 2,
+        pursuer_hp: int = 40,
+        player_hp: int = 100,
+        pursuer_damage: int = 50,
+        player_damage: int = 20,
         seed: Optional[int] = None,
         # --- Domain randomization knobs (all default to off for back-compat) ---
         max_episode_steps_range: Optional[tuple[int, int]] = None,
@@ -527,7 +528,8 @@ class PursuerEnv(gym.Env):
         self._max_steps = max_episode_steps
         self._pursuer_max_hp = pursuer_hp
         self._player_max_hp = player_hp
-        self._attack_damage = attack_damage
+        self._pursuer_damage = pursuer_damage
+        self._player_damage = player_damage
         self._distractor_prob = float(distractor_prob)
         self._randomize_player_profile = bool(randomize_player_profile)
 
@@ -542,6 +544,7 @@ class PursuerEnv(gym.Env):
         self.topology: Optional[Topology] = None
         self.pursuer_pos: tuple[int, int] = (0, 0)
         self.pursuer_hp = pursuer_hp
+        self.pursuer_stamina_frac: float = 1.0
         self.player_pos: tuple[int, int] = (0, 0)
         self.player_hp = player_hp
         self.player_angle = 0.0
@@ -570,6 +573,7 @@ class PursuerEnv(gym.Env):
         self.pursuer_pos, self.player_pos = self._place_actors()
         self.pursuer_hp = self._pursuer_max_hp
         self.player_hp = self._player_max_hp
+        self.pursuer_stamina_frac = self._rng.uniform(0.3, 1.0)
         self.player_angle = self._rng.uniform(-math.pi, math.pi)
         self.memory = PursuerMemory()
         self.step_count = 0
@@ -624,7 +628,7 @@ class PursuerEnv(gym.Env):
         # Pursuer attack — adjacency check.
         pursuer_hit = self._adjacent(self.pursuer_pos, self.player_pos)
         if pursuer_hit and action != ACTION_WAIT:
-            self.player_hp -= self._attack_damage
+            self.player_hp -= self._pursuer_damage
 
         # --- Scripted player reacts ----------------------------------------
         player_action, new_angle = self._player_policy(self, self._rng)
@@ -632,7 +636,7 @@ class PursuerEnv(gym.Env):
         self.player_pos = self._try_move(self.player_pos, player_action)
         # Player counter-attack if adjacent (simulates the real Combat service).
         if self._adjacent(self.pursuer_pos, self.player_pos) and player_action != ACTION_WAIT:
-            self.pursuer_hp -= self._attack_damage
+            self.pursuer_hp -= self._player_damage
 
         # `_was_visible_to_player` carries *last turn's* visibility into
         # this turn's reward/info — that's the ambush condition.
@@ -756,7 +760,7 @@ class PursuerEnv(gym.Env):
             topology=self.topology,
             pursuer_pos=self.pursuer_pos,
             pursuer_hp_frac=self.pursuer_hp / max(self._pursuer_max_hp, 1),
-            pursuer_stamina_frac=1.0,
+            pursuer_stamina_frac=self.pursuer_stamina_frac,
             memory=self.memory,
             player_pos=self.player_pos,
             player_angle_rad=self.player_angle,
