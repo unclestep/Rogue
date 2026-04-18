@@ -780,8 +780,10 @@ class PursuerEnv(gym.Env):
         +5   ambush bonus if pursuer wasn't visible to the player last turn
         +20  killed player (episode ends)
         -2   pursuer dies
-        +0.01 * Δscent  potential shaping (closing distance ≈ positive)
-        -0.05 step inside player cone when chebyshev dist > 2  (stealth penalty)
+        +0.1 * Δscent  potential shaping (closing distance ≈ positive).
+                  Previously 0.01 — too weak to compete with death risk, agent
+                  found "never engage" local optimum. 10× makes approach
+                  worth the risk across a typical episode.
         -0.1 * k  per turn camping near exit (k = consecutive turns, resets when
                   leaving the camp zone or when player approaches within 4 tiles —
                   intercepting a fleeing player is legitimate, loitering is not)
@@ -806,24 +808,18 @@ class PursuerEnv(gym.Env):
         current = int(scent[self.pursuer_pos[1], self.pursuer_pos[0]])
         if self._prev_scent_val is not None and current < 10**8:
             delta = self._prev_scent_val - current
-            r += 0.01 * delta
+            r += 0.1 * delta
         self._prev_scent_val = current
 
         in_cone_now = (
             self._cone_mask_cache is not None
             and self._cone_mask_cache[self.pursuer_pos[1], self.pursuer_pos[0]]
         )
-        if in_cone_now:
-            # The final 1-2 tiles through the cone are the attack itself;
-            # penalising melee-range cone presence kills hit-rate (observed
-            # 30% vs Fallback's 97% at the first 2M-step eval). Gate by
-            # chebyshev distance so pursuer commits once adjacent.
-            melee_dist = max(
-                abs(self.player_pos[0] - self.pursuer_pos[0]),
-                abs(self.player_pos[1] - self.pursuer_pos[1]),
-            )
-            if melee_dist > 2:
-                r -= 0.05
+        # Stealth penalty removed: -0.05 per in-cone step biased PPO toward
+        # pure hiding (eval at 500K steps: len=220, hits=0, death=0 —
+        # cowardice collapse). The cone mask is already in the observation,
+        # so the agent can learn when to hide from downstream reward (hit
+        # vs counter-attack) instead of a hand-coded prior.
 
         # Anti-camping: Alien: Isolation-style — the Xenomorph must not just
         # park on the exit. Escalating penalty while within 3 chebyshev tiles
