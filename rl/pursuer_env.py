@@ -552,6 +552,8 @@ class PursuerEnv(gym.Env):
         self._was_visible_to_player = False
         self._prev_scent_val: Optional[int] = None
         self._cone_mask_cache: Optional[np.ndarray] = None
+        self._exit_scent_cache: Optional[np.ndarray] = None
+        self._exit_camp_counter = 0
 
     # ------------------------------------------------------------------
     # Gymnasium API.
@@ -573,6 +575,8 @@ class PursuerEnv(gym.Env):
         self.step_count = 0
         self._was_visible_to_player = False
         self._prev_scent_val = None
+        self._exit_camp_counter = 0
+        self._exit_scent_cache = chase_scent_map(self.topology, self.topology.exit_point)
 
         # --- Domain randomization per episode ----------------------------
         if self._max_steps_range is not None:
@@ -729,6 +733,19 @@ class PursuerEnv(gym.Env):
     def _adjacent(self, a: tuple[int, int], b: tuple[int, int]) -> bool:
         return abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1
 
+    def exit_scent_map(self) -> np.ndarray:
+        """BFS distance from the topology exit over walkable cells.
+
+        Cached per-episode in `reset()`; the exit doesn't move so the map is
+        stable. Used by the goal-directed scripted player.
+        """
+        assert self.topology is not None
+        if self._exit_scent_cache is None:
+            self._exit_scent_cache = chase_scent_map(
+                self.topology, self.topology.exit_point
+            )
+        return self._exit_scent_cache
+
     def _compute_cone(self) -> np.ndarray:
         assert self.topology is not None
         return flashlight_mask(self.topology, self.player_pos, self.player_angle)
@@ -755,16 +772,22 @@ class PursuerEnv(gym.Env):
         pursuer_hit: bool,
     ) -> float:
         """
-        Reward breakdown (plan PR 4 spec):
+        Reward breakdown:
 
         +10  per hit landed
         +5   ambush bonus if pursuer wasn't visible to the player last turn
         +20  killed player (episode ends)
         -2   pursuer dies
         +0.01 * Δscent  potential shaping (closing distance ≈ positive)
-        -0.05 step inside player cone  (stealth penalty)
+        -0.05 step inside player cone when chebyshev dist > 2  (stealth penalty)
+        -0.1 * k  per turn camping near exit (k = consecutive turns, resets when
+                  leaving the camp zone or when player approaches within 4 tiles —
+                  intercepting a fleeing player is legitimate, loitering is not)
         -0.001 per step                (time penalty)
-        -0.05 action == Wait           (don't stall)
+        Wait action:
+          -0.1  if in the player's cone (freeze-in-spotlight: worst possible wait)
+          -0.02 if blind (turns_since_LOS > 10 — no stealth gain from stalling)
+           0    otherwise (stalking wait out of cone — allowed)
         """
         assert self.topology is not None
         r = 0.0
@@ -789,18 +812,47 @@ class PursuerEnv(gym.Env):
             and self._cone_mask_cache[self.pursuer_pos[1], self.pursuer_pos[0]]
         )
         if in_cone_now:
-            # Stealth matters while stalking, not in melee: the final 1-2
-            # tiles through the cone are the attack itself. Gating the
-            # penalty by distance prevents the policy from retreating when
-            # adjacent (the failure mode observed at 2M-step eval: 30%
-            # hit-rate vs Fallback's 97%).
-            dist = abs(self.player_pos[0] - self.pursuer_pos[0]) + abs(
-                self.player_pos[1] - self.pursuer_pos[1]
+            # The final 1-2 tiles through the cone are the attack itself;
+            # penalising melee-range cone presence kills hit-rate (observed
+            # 30% vs Fallback's 97% at the first 2M-step eval). Gate by
+            # chebyshev distance so pursuer commits once adjacent.
+            melee_dist = max(
+                abs(self.player_pos[0] - self.pursuer_pos[0]),
+                abs(self.player_pos[1] - self.pursuer_pos[1]),
             )
-            if dist > 2:
+            if melee_dist > 2:
                 r -= 0.05
 
+        # Anti-camping: Alien: Isolation-style — the Xenomorph must not just
+        # park on the exit. Escalating penalty while within 3 chebyshev tiles
+        # of the exit, resets the moment the pursuer steps out or the player
+        # closes in (intercept is a legitimate tactic).
+        EXIT_CAMP_RADIUS = 3
+        EXIT_CAMP_INTERCEPT_RADIUS = 4
+        exit_x, exit_y = self.topology.exit_point
+        dist_to_exit = max(
+            abs(exit_x - self.pursuer_pos[0]),
+            abs(exit_y - self.pursuer_pos[1]),
+        )
+        dist_to_player = max(
+            abs(self.player_pos[0] - self.pursuer_pos[0]),
+            abs(self.player_pos[1] - self.pursuer_pos[1]),
+        )
+        if (
+            dist_to_exit <= EXIT_CAMP_RADIUS
+            and dist_to_player > EXIT_CAMP_INTERCEPT_RADIUS
+        ):
+            self._exit_camp_counter += 1
+            r -= 0.1 * self._exit_camp_counter
+        else:
+            self._exit_camp_counter = 0
+
         r -= 0.001
+
         if action == ACTION_WAIT:
-            r -= 0.05
+            if in_cone_now:
+                r -= 0.1
+            elif self.memory.turns_since_los > 10:
+                r -= 0.02
+            # else: stalking wait out of sight — permitted.
         return r

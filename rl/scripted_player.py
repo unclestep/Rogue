@@ -1,18 +1,26 @@
 """
 Scripted opponent for PursuerEnv.
 
-The player behaviour is intentionally crude — we need the pursuer to learn
-stealth/ambush tactics, not to counter a sophisticated policy. Profiles keep
-training diverse enough to transfer to the real Go game, which has different
-player styles in different moments:
+The player is goal-directed — most turns it descends an exit-scent gradient
+toward `topology.exit_point`, which is what real players do. That gives the
+pursuer a consistent target of movement to stalk and intercept, instead of the
+random flailing the previous version produced. We still randomize around the
+goal to keep training diverse:
 
-  * default    — balanced: moderate flee, some waits, medium angle jitter.
-  * aggressive — high flee probability, low wait, wide angle sweeps (simulates
-                 a player actively hunting).
-  * cautious   — low flee, high wait, narrow angle jitter (simulates a player
-                 standing guard in a chokepoint).
-  * timid      — very high flee, medium wait, wide angle sweeps (simulates a
-                 player trying to escape at all costs).
+  * flee_prob    — chance of stepping away when pursuer is adjacent.
+  * wait_prob    — chance of standing still on a normal turn.
+  * goal_prob    — chance of taking the scent-descending move vs a random step
+                   (imperfection so pursuer doesn't overfit a perfect player).
+  * panic_boost  — multiplier applied to goal_prob when the pursuer is visible
+                   in the player's cone (realistic "oh god run for the exit").
+  * angle_jitter — per-step cone rotation magnitude.
+
+Profiles:
+
+  * default    — balanced.
+  * aggressive — hunts: low flee, low wait, ignores the exit more often.
+  * cautious   — camps: medium flee, high wait, sticks to the exit heavily.
+  * timid      — flees: high flee, full goal focus under panic.
 
 All randomness flows through the RNG the env passes in, so episodes stay
 reproducible under `env.reset(seed=...)`.
@@ -51,53 +59,102 @@ if TYPE_CHECKING:
 
 CARDINAL_ACTIONS = [ACTION_UP, ACTION_RIGHT, ACTION_DOWN, ACTION_LEFT]
 
-# Per-profile behavioural knobs. Keep the "default" row identical to the
-# pre-randomization defaults so existing tests/baselines stay unchanged.
 _PROFILES: dict[str, dict[str, float]] = {
-    "default":    {"flee_prob": 0.5, "wait_prob": 0.2, "angle_jitter": 0.6},
-    "aggressive": {"flee_prob": 0.8, "wait_prob": 0.05, "angle_jitter": 1.0},
-    "cautious":   {"flee_prob": 0.2, "wait_prob": 0.5, "angle_jitter": 0.2},
-    "timid":      {"flee_prob": 0.95, "wait_prob": 0.2, "angle_jitter": 0.9},
+    "default":    {"flee_prob": 0.5,  "wait_prob": 0.1,  "goal_prob": 0.75, "panic_boost": 1.0, "angle_jitter": 0.6},
+    "aggressive": {"flee_prob": 0.3,  "wait_prob": 0.02, "goal_prob": 0.55, "panic_boost": 0.8, "angle_jitter": 1.0},
+    "cautious":   {"flee_prob": 0.7,  "wait_prob": 0.3,  "goal_prob": 0.85, "panic_boost": 1.0, "angle_jitter": 0.2},
+    "timid":      {"flee_prob": 0.95, "wait_prob": 0.1,  "goal_prob": 0.95, "panic_boost": 1.0, "angle_jitter": 0.9},
 }
 
 
 def scripted_player_policy(env: "PursuerEnv", rng: random.Random) -> tuple[int, float]:
-    """Default player for training. Returns (action, new_aim_angle_rad)."""
+    """Goal-directed player. Returns (action, new_aim_angle_rad)."""
     assert env.topology is not None
 
-    profile = _PROFILES.get(getattr(env, "player_profile", "default"), _PROFILES["default"])
+    profile = _PROFILES.get(
+        getattr(env, "player_profile", "default"), _PROFILES["default"]
+    )
     flee_prob = profile["flee_prob"]
     wait_prob = profile["wait_prob"]
+    goal_prob = profile["goal_prob"]
+    panic_boost = profile["panic_boost"]
     angle_jitter = profile["angle_jitter"]
 
     dx = env.pursuer_pos[0] - env.player_pos[0]
     dy = env.pursuer_pos[1] - env.player_pos[1]
 
-    # Flee if adjacent.
+    # Panic mode: pursuer is in our cone right now. Sprint for the exit, cut
+    # wait probability, widen angle jitter (player looking around wildly).
+    pursuer_visible_now = (
+        env._cone_mask_cache is not None
+        and env._cone_mask_cache[env.pursuer_pos[1], env.pursuer_pos[0]]
+    )
+    if pursuer_visible_now:
+        goal_prob = min(1.0, goal_prob * (1.0 + panic_boost))
+        wait_prob = wait_prob * 0.2
+        angle_jitter = min(math.pi, angle_jitter * 1.5)
+
     if abs(dx) + abs(dy) == 1 and rng.random() < flee_prob:
-        action = _flee_action(env, dx, dy)
+        action = _flee_action(dx, dy)
     elif rng.random() < wait_prob:
         action = ACTION_WAIT
+    elif rng.random() < goal_prob:
+        action = _goal_directed_action(env, rng)
     else:
-        action = rng.choice(CARDINAL_ACTIONS)
-        # Prefer walkable moves — re-roll once if we're about to bump.
-        vec = ACTION_VECTORS[action]
-        tgt = (env.player_pos[0] + vec[0], env.player_pos[1] + vec[1])
-        if not env.topology.is_walkable(*tgt):
-            action = rng.choice(CARDINAL_ACTIONS)
+        action = _safe_random_step(env, rng)
 
-    # Rotate cone by a random small angle every step.
     angle_delta = rng.uniform(-angle_jitter, angle_jitter)
     new_angle = _wrap_angle(env.player_angle + angle_delta)
     return action, new_angle
 
 
-def _flee_action(env: "PursuerEnv", dx: int, dy: int) -> int:
+def _flee_action(dx: int, dy: int) -> int:
     """Step away from (dx, dy) — the vector *from* player *to* pursuer."""
-    # Negate so we move opposite to the pursuer.
     if abs(dx) >= abs(dy):
         return ACTION_LEFT if dx > 0 else ACTION_RIGHT
     return ACTION_UP if dy > 0 else ACTION_DOWN
+
+
+def _goal_directed_action(env: "PursuerEnv", rng: random.Random) -> int:
+    """Step down the exit-scent gradient; break ties randomly.
+
+    Falls back to a random cardinal if no neighbour reduces scent (e.g. player
+    is already on the exit tile, or boxed in by non-walkable cells)."""
+    scent = env.exit_scent_map()
+    px, py = env.player_pos
+    current = int(scent[py, px])
+    INF = 10**8
+    best = current
+    best_actions: list[int] = []
+    for a in CARDINAL_ACTIONS:
+        vx, vy = ACTION_VECTORS[a]
+        nx, ny = px + vx, py + vy
+        if env.topology is None or not env.topology.is_walkable(nx, ny):
+            continue
+        v = int(scent[ny, nx])
+        if v >= INF:
+            continue
+        if v < best:
+            best = v
+            best_actions = [a]
+        elif v == best:
+            best_actions.append(a)
+    if not best_actions or best == current:
+        return _safe_random_step(env, rng)
+    return rng.choice(best_actions)
+
+
+def _safe_random_step(env: "PursuerEnv", rng: random.Random) -> int:
+    """Pick a walkable cardinal if possible, otherwise any cardinal."""
+    assert env.topology is not None
+    candidates = []
+    for a in CARDINAL_ACTIONS:
+        vx, vy = ACTION_VECTORS[a]
+        if env.topology.is_walkable(env.player_pos[0] + vx, env.player_pos[1] + vy):
+            candidates.append(a)
+    if candidates:
+        return rng.choice(candidates)
+    return rng.choice(CARDINAL_ACTIONS)
 
 
 def _wrap_angle(a: float) -> float:
