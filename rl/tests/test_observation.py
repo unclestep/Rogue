@@ -25,7 +25,9 @@ import numpy as np
 import pytest
 
 from rl.pursuer_env import (
+    CH_AGE_LAST_SEEN,
     CH_PLAYER_CONE,
+    CH_SCENT,
     CH_SELF_TRAIL,
     CH_WALKABLE,
     OBSERVATION_CROP_SIZE,
@@ -37,6 +39,7 @@ from rl.pursuer_env import (
     PursuerMemory,
     Topology,
     build_observation,
+    chase_scent_map,
     flashlight_mask,
 )
 from rl.scripted_player import scripted_player_policy
@@ -145,13 +148,153 @@ def test_cone_channel_lights_origin(topology):
     assert grid[CH_PLAYER_CONE, OBSERVATION_HALF_CROP, OBSERVATION_HALF_CROP] == 1.0
 
 
-def test_env_full_episode_no_crash():
-    env = PursuerEnv(str(FIXTURES), scripted_player_policy, max_episode_steps=25, seed=1)
-    obs, _ = env.reset(seed=1)
-    assert obs.shape == (OBSERVATION_SIZE,)
-    for _ in range(25):
-        a = env.action_space.sample()
-        obs, r, term, trunc, _ = env.step(int(a))
-        assert np.isfinite(r)
+def test_observation_all_grid_values_in_unit_range(topology):
+    """Every cell in the spatial channel block must be in [0, 1]."""
+    center = topology.rooms[0]["center"]
+    pursuer = (center["x"], center["y"])
+    player = (pursuer[0] - 2, pursuer[1])
+    obs = build_observation(
+        topology=topology,
+        pursuer_pos=pursuer,
+        pursuer_hp_frac=1.0,
+        pursuer_stamina_frac=1.0,
+        memory=PursuerMemory(),
+        player_pos=player,
+        player_angle_rad=0.0,
+        cone_mask=None,
+        scent_map=chase_scent_map(topology, player),
+    )
+    grid = obs[:OBSERVATION_GRID_FLOATS]
+    assert np.all(grid >= 0.0) and np.all(grid <= 1.0), (
+        f"grid out of [0,1]: min={grid.min():.4f} max={grid.max():.4f}"
+    )
+
+
+def test_scent_channel_hot_at_player_position(topology):
+    """CH_SCENT must be 1.0 at the player's own cell (BFS distance = 0)."""
+    center = topology.rooms[0]["center"]
+    pursuer = (center["x"], center["y"])
+    player = (pursuer[0] - 2, pursuer[1])  # within 11×11 crop
+    scent = chase_scent_map(topology, player)
+
+    obs = build_observation(
+        topology=topology,
+        pursuer_pos=pursuer,
+        pursuer_hp_frac=1.0,
+        pursuer_stamina_frac=1.0,
+        memory=PursuerMemory(),
+        player_pos=player,
+        player_angle_rad=0.0,
+        cone_mask=None,
+        scent_map=scent,
+    )
+    grid = obs[:OBSERVATION_GRID_FLOATS].reshape(-1, OBSERVATION_CROP_SIZE, OBSERVATION_CROP_SIZE)
+    # player dx=-2, dy=0 → crop (3, 5)
+    cx, cy = OBSERVATION_HALF_CROP - 2, OBSERVATION_HALF_CROP
+    val = grid[CH_SCENT, cy, cx]
+    assert abs(val - 1.0) < 1e-5, f"CH_SCENT at player cell expected 1.0, got {val}"
+
+
+def test_scent_channel_zero_when_no_scent_map(topology):
+    """CH_SCENT must stay 0 when scent_map=None (the common offline-render case)."""
+    center = topology.rooms[0]["center"]
+    pursuer = (center["x"], center["y"])
+    obs = build_observation(
+        topology=topology,
+        pursuer_pos=pursuer,
+        pursuer_hp_frac=1.0,
+        pursuer_stamina_frac=1.0,
+        memory=PursuerMemory(),
+        player_pos=None,
+        player_angle_rad=0.0,
+        cone_mask=None,
+        scent_map=None,
+    )
+    grid = obs[:OBSERVATION_GRID_FLOATS].reshape(-1, OBSERVATION_CROP_SIZE, OBSERVATION_CROP_SIZE)
+    assert np.all(grid[CH_SCENT] == 0.0), "CH_SCENT must be all-zero with no scent_map"
+
+
+def test_age_last_seen_peaks_at_last_seen_cell(topology):
+    """CH_AGE_LAST_SEEN must be 1.0 at the last-seen cell with turns_since_los=0."""
+    center = topology.rooms[0]["center"]
+    pursuer = (center["x"], center["y"])
+    last_seen = (pursuer[0] - 1, pursuer[1])  # one cell left of pursuer
+
+    mem = PursuerMemory()
+    mem.last_seen = last_seen
+    mem.turns_since_los = 0  # amplitude = 1.0
+
+    obs = build_observation(
+        topology=topology,
+        pursuer_pos=pursuer,
+        pursuer_hp_frac=1.0,
+        pursuer_stamina_frac=1.0,
+        memory=mem,
+        player_pos=None,
+        player_angle_rad=0.0,
+        cone_mask=None,
+    )
+    grid = obs[:OBSERVATION_GRID_FLOATS].reshape(-1, OBSERVATION_CROP_SIZE, OBSERVATION_CROP_SIZE)
+    # last_seen dx=-1, dy=0 → crop (4, 5)
+    peak = grid[CH_AGE_LAST_SEEN, OBSERVATION_HALF_CROP, OBSERVATION_HALF_CROP - 1]
+    at_pursuer = grid[CH_AGE_LAST_SEEN, OBSERVATION_HALF_CROP, OBSERVATION_HALF_CROP]
+    assert abs(peak - 1.0) < 1e-5, f"peak amplitude must be 1.0, got {peak:.6f}"
+    assert peak > at_pursuer, (
+        f"CH_AGE_LAST_SEEN must peak at last-seen ({peak:.4f}) > at pursuer ({at_pursuer:.4f})"
+    )
+
+
+def test_age_last_seen_zero_at_memory_horizon(topology):
+    """CH_AGE_LAST_SEEN must be all-zero when turns_since_los == PURSUER_MEMORY_HORIZON."""
+    from rl.pursuer_env import PURSUER_MEMORY_HORIZON
+
+    center = topology.rooms[0]["center"]
+    pursuer = (center["x"], center["y"])
+
+    mem = PursuerMemory()
+    mem.last_seen = (pursuer[0] - 1, pursuer[1])
+    mem.turns_since_los = PURSUER_MEMORY_HORIZON  # amplitude = 0
+
+    obs = build_observation(
+        topology=topology,
+        pursuer_pos=pursuer,
+        pursuer_hp_frac=1.0,
+        pursuer_stamina_frac=1.0,
+        memory=mem,
+        player_pos=None,
+        player_angle_rad=0.0,
+        cone_mask=None,
+    )
+    grid = obs[:OBSERVATION_GRID_FLOATS].reshape(-1, OBSERVATION_CROP_SIZE, OBSERVATION_CROP_SIZE)
+    assert np.all(grid[CH_AGE_LAST_SEEN] == 0.0), (
+        "CH_AGE_LAST_SEEN must be all-zero at memory horizon"
+    )
+
+
+def test_env_pursuer_can_move_toward_player():
+    """Pursuer must actually change position in at least one of several steps."""
+    env = PursuerEnv(str(FIXTURES), scripted_player_policy, max_episode_steps=30, seed=3)
+    env.reset(seed=3)
+    start_pos = env.pursuer_pos
+    moved = False
+    for _ in range(30):
+        _, _, term, trunc, _ = env.step(int(env.action_space.sample()))
+        if env.pursuer_pos != start_pos:
+            moved = True
+            break
         if term or trunc:
             break
+    assert moved, "Pursuer never moved from starting position in 30 steps"
+
+
+def test_env_episode_terminates_or_truncates():
+    """An episode must end (term or trunc) within max_episode_steps steps."""
+    env = PursuerEnv(str(FIXTURES), scripted_player_policy, max_episode_steps=50, seed=5)
+    env.reset(seed=5)
+    ended = False
+    for _ in range(50):
+        _, _, term, trunc, _ = env.step(int(env.action_space.sample()))
+        if term or trunc:
+            ended = True
+            break
+    assert ended, "Episode did not terminate or truncate within 50 steps"

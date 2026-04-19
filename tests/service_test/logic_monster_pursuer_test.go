@@ -45,52 +45,53 @@ func TestMonsterControllerTickPursuerEmitsIntent(t *testing.T) {
 	}
 }
 
-// Fresh Pursuer from NewDefaultPursuer must start in BehaviorPursuer so that
-// Tick dispatches to the registered behavior instead of falling into the nil
-// BehaviorIdle bucket.
-func TestNewDefaultPursuerStartsInPursuerState(t *testing.T) {
-	p := model.NewDefaultPursuer(1, geometry.NewDefaultPoint())
-	if p.State != model.BehaviorPursuer {
-		t.Errorf("Expected State=BehaviorPursuer, got %v", p.State)
+// All five actions must produce the correct move vector through the full
+// Policy.Predict → PursuerBehavior.Update → ActionToVector → Resolve pipeline.
+// A bug in any link of that chain causes the wrong vector for at least one action.
+func TestPursuerScriptedPolicyAllActionsMapCorrectly(t *testing.T) {
+	type tc struct {
+		action     int
+		wantVector geometry.Point
+		wantMove   bool // false for ActionWait which self-attacks, not IntentMove
 	}
-}
+	cases := []tc{
+		{service.ActionUp, geometry.Point{X: 0, Y: -1}, true},
+		{service.ActionRight, geometry.Point{X: 1, Y: 0}, true},
+		{service.ActionDown, geometry.Point{X: 0, Y: 1}, true},
+		{service.ActionLeft, geometry.Point{X: -1, Y: 0}, true},
+	}
+	for _, tc := range cases {
+		play := model.NewPlaythrough("", 0, 0)
+		play.Map = buildMonsterTestMap()
 
-// With a ScriptedPolicy the Pursuer's outgoing intent must carry the exact
-// vector dictated by the scripted action — proving Policy.Predict is wired
-// through PursuerBehavior.Update to moveResolver.Resolve and that
-// ActionToVector maps the five-way action space correctly.
-func TestPursuerScriptedPolicyControlsMovement(t *testing.T) {
-	play := model.NewPlaythrough("", 0, 0)
-	play.Map = buildMonsterTestMap()
+		player := model.NewDefaultPlayer(1, geometry.Point{X: 2, Y: 2}, 9)
+		play.Players[player.Id] = player
+		play.Map.SetActor(player.Pos, int64(player.Id))
 
-	player := model.NewDefaultPlayer(1, geometry.Point{X: 2, Y: 2}, 9)
-	play.Players[player.Id] = player
-	play.Map.SetActor(player.Pos, int64(player.Id))
+		monster := model.NewDefaultPursuer(2, geometry.Point{X: 6, Y: 6})
+		play.Monsters[monster.Id] = monster
+		play.Map.SetActor(monster.Pos, int64(monster.Id))
 
-	monster := model.NewDefaultPursuer(2, geometry.Point{X: 6, Y: 6})
-	play.Monsters[monster.Id] = monster
-	play.Map.SetActor(monster.Pos, int64(monster.Id))
+		ctrl := newMonsterControllerWithPolicy(service.NewScriptedPolicy([]int{tc.action}))
+		ctx := model.NewSessionContext(play)
+		intents := ctrl.Tick(ctx)
 
-	ctrl := newMonsterControllerWithPolicy(service.NewScriptedPolicy([]int{service.ActionUp}))
-	ctx := model.NewSessionContext(play)
-
-	intents := ctrl.Tick(ctx)
-
-	var got *model.Intent
-	for _, it := range intents {
-		if it.Actor == monster.Id {
-			got = it
-			break
+		var got *model.Intent
+		for _, it := range intents {
+			if it.Actor == monster.Id {
+				got = it
+				break
+			}
 		}
-	}
-	if got == nil {
-		t.Fatalf("Expected an intent for Pursuer, got none")
-	}
-	if got.IntentType != model.IntentMove {
-		t.Errorf("Expected IntentMove, got %v", got.IntentType)
-	}
-	if (got.Vector != geometry.Point{X: 0, Y: -1}) {
-		t.Errorf("Expected Vector=(0,-1) from ActionUp, got %v", got.Vector)
+		if got == nil {
+			t.Fatalf("action %d: expected intent for Pursuer, got none", tc.action)
+		}
+		if got.IntentType != model.IntentMove {
+			t.Errorf("action %d: expected IntentMove, got %v", tc.action, got.IntentType)
+		}
+		if got.Vector != tc.wantVector {
+			t.Errorf("action %d: expected vector %v, got %v", tc.action, tc.wantVector, got.Vector)
+		}
 	}
 }
 

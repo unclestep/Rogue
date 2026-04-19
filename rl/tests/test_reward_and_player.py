@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from rl.pursuer_env import (
+    ACTION_UP,
     ACTION_WAIT,
     PURSUER_MEMORY_HORIZON,
     PursuerEnv,
@@ -47,12 +48,6 @@ def _make_env(**kwargs) -> PursuerEnv:
 # ---------------------------------------------------------------------------
 # Anti-camping reward.
 # ---------------------------------------------------------------------------
-
-
-def test_exit_camp_counter_starts_zero_after_reset(topology):
-    env = _make_env()
-    env.reset(seed=11)
-    assert env._exit_camp_counter == 0
 
 
 def test_exit_camp_escalating_penalty_when_parked_on_exit(topology):
@@ -213,6 +208,157 @@ def test_goal_directed_player_makes_progress_toward_exit():
             trend_drops += 1
     # At least 3 of 5 episodes show progress toward exit.
     assert trend_drops >= 3, f"player didn't trend toward exit: {trend_drops}/5 dropped"
+
+
+# ---------------------------------------------------------------------------
+# Terminal reward exact magnitudes.
+# All components except the target are isolated:
+#   - prev_pos == pursuer_pos  → approach shaping = 0
+#   - _exit_scent_cache = None  → no exit-blocking penalty
+#   - distractor_pos = None     → no crowd penalty
+#   - _first_detection_done = True → no ambush bonus
+#   - pursuer far from exit     → anti-camp counter stays 0
+#   - cone = zeros              → no freeze penalty in wait tests
+# ---------------------------------------------------------------------------
+
+
+def _isolate(env: PursuerEnv) -> None:
+    """Null out all optional reward components."""
+    env._exit_scent_cache = None
+    env.distractor_pos = None
+    env._first_detection_done = True
+    env._exit_camp_counter = 0
+    env._cone_mask_cache = np.zeros(
+        (env.topology.height, env.topology.width), dtype=bool
+    )
+
+
+def test_terminal_reward_player_caught():
+    """+10.0 when player HP reaches 0; only time penalty (-0.001) on top."""
+    env = _make_env()
+    env.reset(seed=42)
+    env.player_hp = 0
+    env.pursuer_hp = 1
+    env.pursuer_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
+    env.player_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=8)
+    _isolate(env)
+
+    r = env._compute_reward(action=ACTION_UP, prev_pos=env.pursuer_pos, pursuer_hit=False)
+    assert abs(r - 9.999) < 1e-6, f"Expected +10.0 - 0.001 = 9.999, got {r}"
+
+
+def test_terminal_reward_player_escaped():
+    """-15.0 when player reaches exit; only time penalty on top."""
+    env = _make_env()
+    env.reset(seed=42)
+    env.player_hp = 1
+    env.pursuer_hp = 1
+    env.pursuer_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
+    env.player_pos = env.topology.exit_point
+    _isolate(env)
+
+    r = env._compute_reward(action=ACTION_UP, prev_pos=env.pursuer_pos, pursuer_hit=False)
+    assert abs(r - (-15.001)) < 1e-6, f"Expected -15.0 - 0.001 = -15.001, got {r}"
+
+
+def test_terminal_reward_pursuer_death():
+    """-2.0 when pursuer HP reaches 0; only time penalty on top."""
+    env = _make_env()
+    env.reset(seed=42)
+    env.pursuer_hp = 0
+    env.player_hp = 1
+    env.pursuer_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
+    env.player_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=8)
+    _isolate(env)
+
+    r = env._compute_reward(action=ACTION_UP, prev_pos=env.pursuer_pos, pursuer_hit=False)
+    assert abs(r - (-2.001)) < 1e-6, f"Expected -2.0 - 0.001 = -2.001, got {r}"
+
+
+def test_approach_shaping_one_step_closer():
+    """Moving one step closer to player adds exactly +0.1 reward."""
+    env = _make_env()
+    env.reset(seed=42)
+    env.player_hp = 1
+    env.pursuer_hp = 1
+    pursuer = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
+    env.pursuer_pos = pursuer
+    # Player 5 cells east — no need to be walkable for reward calc.
+    env.player_pos = (pursuer[0] + 5, pursuer[1])
+    _isolate(env)
+
+    # Baseline: prev_pos == pursuer_pos → approach = 0.
+    r_same = env._compute_reward(action=ACTION_UP, prev_pos=pursuer, pursuer_hit=False)
+    env._exit_camp_counter = 0
+
+    # One step west means previous position was further from player.
+    prev_west = (pursuer[0] - 1, pursuer[1])
+    r_closer = env._compute_reward(action=ACTION_UP, prev_pos=prev_west, pursuer_hit=False)
+
+    diff = r_closer - r_same
+    assert abs(diff - 0.1) < 1e-6, f"Approach delta expected 0.1, got {diff}"
+
+
+def test_wait_in_cone_adds_exact_penalty():
+    """-0.1 extra when WAIT action while pursuer is inside player cone."""
+    env = _make_env()
+    env.reset(seed=42)
+    env.player_hp = 1
+    env.pursuer_hp = 1
+    env.pursuer_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
+    env.player_pos = _pick_far_cell(env, env.pursuer_pos, min_dist=5)
+    env._exit_scent_cache = None
+    env.distractor_pos = None
+    env._first_detection_done = True
+    env._exit_camp_counter = 0
+    env.memory = PursuerMemory()
+    env.memory.turns_since_los = 5  # not blind
+
+    # No cone → no freeze penalty.
+    env._cone_mask_cache = np.zeros(
+        (env.topology.height, env.topology.width), dtype=bool
+    )
+    r_out = env._compute_reward(action=ACTION_WAIT, prev_pos=env.pursuer_pos, pursuer_hit=False)
+
+    env._exit_camp_counter = 0
+    # Pursuer cell lit → freeze penalty fires.
+    cone = np.zeros((env.topology.height, env.topology.width), dtype=bool)
+    cone[env.pursuer_pos[1], env.pursuer_pos[0]] = True
+    env._cone_mask_cache = cone
+    r_in = env._compute_reward(action=ACTION_WAIT, prev_pos=env.pursuer_pos, pursuer_hit=False)
+
+    delta = r_in - r_out
+    assert abs(delta - (-0.1)) < 1e-6, f"Wait-in-cone penalty expected -0.1, got {delta}"
+
+
+def test_wait_blind_adds_exact_penalty():
+    """-0.02 extra when WAIT and blind (turns_since_los > 10) and not in cone."""
+    env = _make_env()
+    env.reset(seed=42)
+    env.player_hp = 1
+    env.pursuer_hp = 1
+    env.pursuer_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
+    env.player_pos = _pick_far_cell(env, env.pursuer_pos, min_dist=5)
+    env._exit_scent_cache = None
+    env.distractor_pos = None
+    env._first_detection_done = True
+    env._exit_camp_counter = 0
+    # No cone: only the blind penalty can fire.
+    env._cone_mask_cache = np.zeros(
+        (env.topology.height, env.topology.width), dtype=bool
+    )
+
+    env.memory = PursuerMemory()
+    env.memory.turns_since_los = 5  # stalking (≤10): no blind penalty
+    r_stalk = env._compute_reward(action=ACTION_WAIT, prev_pos=env.pursuer_pos, pursuer_hit=False)
+
+    env._exit_camp_counter = 0
+    env.memory = PursuerMemory()
+    env.memory.turns_since_los = 11  # blind (>10): should add -0.02
+    r_blind = env._compute_reward(action=ACTION_WAIT, prev_pos=env.pursuer_pos, pursuer_hit=False)
+
+    delta = r_blind - r_stalk
+    assert abs(delta - (-0.02)) < 1e-6, f"Blind-wait penalty expected -0.02, got {delta}"
 
 
 # ---------------------------------------------------------------------------

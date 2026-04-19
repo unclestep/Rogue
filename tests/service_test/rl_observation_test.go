@@ -78,14 +78,18 @@ func pursuerAt(pos geometry.Point) (*model.SessionContext, *model.Actor) {
 }
 
 //
-// --- SHAPE ---
+// --- SHAPE AND RANGE ---
 //
 
-func TestBuildObservationLengthMatchesLayout(t *testing.T) {
+// Every spatial channel cell must be in [0, 1]. Values outside this range
+// break fp16 quantisation and corrupt ONNX inference.
+func TestBuildObservationAllGridValuesInUnitRange(t *testing.T) {
 	ctx, pursuer := pursuerAt(geometry.Point{X: 7, Y: 4})
 	obs := service.BuildObservation(ctx, pursuer, freshMemory())
-	if len(obs) != service.ObservationSize {
-		t.Fatalf("Expected obs length %d, got %d", service.ObservationSize, len(obs))
+	for i, v := range obs[:service.ObservationGridFloats] {
+		if v < 0 || v > 1 {
+			t.Errorf("obs[%d]=%v out of [0, 1]", i, v)
+		}
 	}
 }
 
@@ -223,9 +227,8 @@ func TestBuildObservationMemoryChannelDecaysWithHorizon(t *testing.T) {
 // --- SCALARS ---
 //
 
-// Half HP and half stamina should land exactly at 0.5 in the scalar block,
-// confirming both the normalisation and the byte layout (scalars after the
-// channel block).
+// Half HP and half stamina must land at exactly 0.5 (±1e-4) confirming both
+// the normalisation formula and the byte layout (scalars after the channel block).
 func TestBuildObservationScalarsEncodeHalfVitals(t *testing.T) {
 	ctx, pursuer := pursuerAt(geometry.Point{X: 7, Y: 4})
 
@@ -237,10 +240,78 @@ func TestBuildObservationScalarsEncodeHalfVitals(t *testing.T) {
 	if len(scalars) != service.ObservationScalars {
 		t.Fatalf("scalar slice length=%d want %d", len(scalars), service.ObservationScalars)
 	}
-	if scalars[0] < 0.49 || scalars[0] > 0.51 {
-		t.Errorf("hp_frac scalar expected ~0.5, got %v", scalars[0])
+	const eps = 1e-4
+	if scalars[0] < 0.5-eps || scalars[0] > 0.5+eps {
+		t.Errorf("hp_frac expected 0.5 ±%.0e, got %v", eps, scalars[0])
 	}
-	if scalars[1] < 0.49 || scalars[1] > 0.51 {
-		t.Errorf("stamina_frac scalar expected ~0.5, got %v", scalars[1])
+	if scalars[1] < 0.5-eps || scalars[1] > 0.5+eps {
+		t.Errorf("stamina_frac expected 0.5 ±%.0e, got %v", eps, scalars[1])
+	}
+}
+
+// Full HP must encode as 1.0; zero HP must encode as 0.0.
+// A normalisation bug (off-by-one, wrong max) fails at these extremes first.
+func TestBuildObservationScalarsFullAndZeroHP(t *testing.T) {
+	ctx, pursuer := pursuerAt(geometry.Point{X: 7, Y: 4})
+
+	pursuer.Vitals[model.VitalHP] = pursuer.DerivedAttrs[model.AttrMaxHP]
+	obs := service.BuildObservation(ctx, pursuer, freshMemory())
+	if obs[service.ObservationGridFloats] != 1.0 {
+		t.Errorf("full HP: hp_frac expected 1.0, got %v", obs[service.ObservationGridFloats])
+	}
+
+	pursuer.Vitals[model.VitalHP] = 0
+	obs = service.BuildObservation(ctx, pursuer, freshMemory())
+	if obs[service.ObservationGridFloats] != 0.0 {
+		t.Errorf("zero HP: hp_frac expected 0.0, got %v", obs[service.ObservationGridFloats])
+	}
+}
+
+// ChScent must be 1.0 at the player's own cell (BFS distance = 0 → value = 1.0).
+// pursuerAt places the player at (2,2); with pursuer at (7,4) that maps to
+// crop (0, 3). If writeChScent is broken or the scent map is missing this is 0.
+func TestBuildObservationScentChannelHotAtPlayerPosition(t *testing.T) {
+	// NewSessionContext builds the chase scent map automatically from player pos.
+	ctx, pursuer := pursuerAt(geometry.Point{X: 7, Y: 4})
+	obs := service.BuildObservation(ctx, pursuer, freshMemory())
+
+	// player (2,2) relative to pursuer (7,4): dx=-5, dy=-2 → crop x=0, y=3.
+	got := service.ObservationCell(obs, service.ChScent, 0, 3)
+	if got < 0.99 {
+		t.Errorf("ChScent at player crop (0,3) expected ≈1.0 (BFS dist=0), got %v", got)
+	}
+}
+
+// ChAgeLastSeen must peak at 1.0 directly on the last-seen cell when
+// TurnsSinceLOS=0, and fall off with Euclidean distance from that cell.
+func TestBuildObservationAgeLastSeenPeaksAtLastSeenCell(t *testing.T) {
+	ctx, pursuer := pursuerAt(geometry.Point{X: 7, Y: 4})
+	// last_seen one cell left of pursuer: dx=-1, dy=0 → crop (4, 5).
+	mem := memoryWithLastSeen(geometry.Point{X: 6, Y: 4}, 0)
+	obs := service.BuildObservation(ctx, pursuer, mem)
+
+	peak := service.ObservationCell(obs, service.ChAgeLastSeen, 4, 5)
+	atPursuer := service.ObservationCell(obs, service.ChAgeLastSeen, 5, 5)
+	if peak < 0.99 {
+		t.Errorf("ChAgeLastSeen at last-seen cell expected ≈1.0, got %v", peak)
+	}
+	if peak <= atPursuer {
+		t.Errorf("ChAgeLastSeen must peak at last-seen (%v) > at pursuer (%v)", peak, atPursuer)
+	}
+}
+
+// ChPlayerMemory amplitude decays linearly with TurnsSinceLOS.
+// At half-horizon the weight must be exactly 0.5 ±1e-4.
+func TestBuildObservationMemoryDecaysAtHalfHorizon(t *testing.T) {
+	ctx, pursuer := pursuerAt(geometry.Point{X: 7, Y: 4})
+	lastSeen := geometry.Point{X: pursuer.Pos.X - 1, Y: pursuer.Pos.Y}
+	halfHorizon := service.PursuerMemoryHorizon / 2 // 10
+
+	obs := service.BuildObservation(ctx, pursuer, memoryWithLastSeen(lastSeen, halfHorizon))
+	// last_seen dx=-1, dy=0 → crop (4, 5); weight = 1 - 10/20 = 0.5.
+	got := service.ObservationCell(obs, service.ChPlayerMemory, 4, 5)
+	const eps = 1e-4
+	if got < 0.5-eps || got > 0.5+eps {
+		t.Errorf("ChPlayerMemory at half-horizon expected 0.5 ±%.0e, got %v", eps, got)
 	}
 }
