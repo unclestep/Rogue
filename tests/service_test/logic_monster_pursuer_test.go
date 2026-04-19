@@ -114,6 +114,7 @@ func TestPursuerBehaviorMemoryPrunedOnMonsterRemoval(t *testing.T) {
 
 	ctx := model.NewSessionContext(play)
 	pb := service.NewPursuerBehavior(service.NewRaycaster(),
+		service.NewPathfinderService(),
 		service.NewScriptedPolicy([]int{service.ActionWait}))
 
 	pb.Update(ctx, m1)

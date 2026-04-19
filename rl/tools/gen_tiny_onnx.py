@@ -30,7 +30,7 @@ import numpy as np
 import onnx
 from onnx import TensorProto, helper, numpy_helper
 
-OBS_SIZE = 859
+OBS_SIZE = 1101  # 9 channels × 11×11 + 12 scalars
 ACTION_COUNT = 5
 
 # Bias chosen so that argmax(logits) == 0 (ActionUp) — lets the test assert

@@ -52,7 +52,7 @@ func TestTileCharReturnsCorrectSymbols(t *testing.T) {
 		{dto.TopologyFloor, "·"},
 		{dto.TopologyCorridor, "·"},
 		{dto.TopologyOpenDoor, "/"},
-		{dto.TopologyClosedDoor, "+"},
+		{dto.TopologyClosedDoor, "%"},
 		{dto.TopologyExit, ">"},
 		{dto.TopologyEmpty, " "},
 		{dto.TopologyUnknown, " "},

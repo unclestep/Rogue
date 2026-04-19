@@ -283,11 +283,15 @@ func buildInventoryEntries(world dto.GameView, filterType dto.ItemType) []invent
 	// Determine which slots to show.
 	var slots []dto.ItemType
 	if filterType != "" {
-		for _, s := range slotOrder {
+		// Iterate actual inventory keys so subtype keys like "elixir_dexterity"
+		// are matched when the filter is "elixir". slotOrder only holds generic
+		// category names and would miss all subtypes.
+		for s := range inventory {
 			if strings.HasPrefix(string(s), string(filterType)) {
 				slots = append(slots, s)
 			}
 		}
+		sort.Slice(slots, func(i, j int) bool { return slots[i] < slots[j] })
 	} else {
 		slots = slotOrder
 	}

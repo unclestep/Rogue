@@ -55,10 +55,10 @@ def test_exit_camp_counter_starts_zero_after_reset(topology):
     assert env._exit_camp_counter == 0
 
 
-def test_exit_camp_flat_penalty_when_parked_on_exit(topology):
-    """Penalty is flat (−0.1) per turn, not escalating. Previously
-    `−0.1 × k` summed to −2010 per 200-step episode (arithmetic progression
-    trap) and dominated every other reward signal.
+def test_exit_camp_escalating_penalty_when_parked_on_exit(topology):
+    """Anti-camp penalty escalates: −0.05 × k each turn (turn 1 → -0.05,
+    turn 2 → -0.10, …). This is intentionally NOT flat — we want increasing
+    pressure to leave the exit area, bounded by the episode length.
     """
     env = _make_env()
     env.reset(seed=12)
@@ -67,6 +67,7 @@ def test_exit_camp_flat_penalty_when_parked_on_exit(topology):
     env.player_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
     env._prev_scent_val = None
     env._exit_camp_counter = 0
+    env._first_detection_done = False
     env._cone_mask_cache = env._compute_cone()
 
     rewards = []
@@ -79,8 +80,9 @@ def test_exit_camp_flat_penalty_when_parked_on_exit(topology):
         rewards.append(r)
 
     assert env._exit_camp_counter == 5
+    # Each subsequent reward must be more negative than the previous one.
     for a, b in zip(rewards, rewards[1:]):
-        assert abs(a - b) < 1e-6, f"camp penalty must be flat, got {rewards}"
+        assert b < a, f"camp penalty must escalate, got {rewards}"
 
 
 def test_exit_camp_resets_when_player_approaches(topology):

@@ -17,14 +17,14 @@ import (
 //	scalars : ObservationScalars floats appended after the channel block
 //
 // Keep this layout in lock-step with the Python Gymnasium env
-// (rl/pursuer_env.py). Any reordering or resizing breaks paritУ.
+// (rl/pursuer_env.py). Any reordering or resizing breaks parity.
 const (
 	ObservationCropSize   = 11
 	ObservationHalfCrop   = ObservationCropSize / 2
-	ObservationChannels   = 7
+	ObservationChannels   = 9
 	ObservationScalars    = 12
-	ObservationGridFloats = ObservationChannels * ObservationCropSize * ObservationCropSize
-	ObservationSize       = ObservationGridFloats + ObservationScalars
+	ObservationGridFloats = ObservationChannels * ObservationCropSize * ObservationCropSize // 9*121=1089
+	ObservationSize       = ObservationGridFloats + ObservationScalars                     // 1101
 
 	ChWalkable     = 0
 	ChClosedDoor   = 1
@@ -33,6 +33,13 @@ const (
 	ChPlayerVisNow = 4
 	ChPlayerMemory = 5
 	ChPlayerCone   = 6
+	ChScent        = 7 // Dijkstra chase-scent gradient: hot near player, fades with distance
+	ChAgeLastSeen  = 8 // Gaussian-spread decay around last-known player position
+
+	// ScentNormFactor is the BFS-distance scale for ChScent normalisation.
+	ScentNormFactor = 30.0
+	// AgeLastSeenSigma is the Gaussian spread (cells) for ChAgeLastSeen.
+	AgeLastSeenSigma = 2.5
 
 	// PursuerTrailCapacity bounds the self-trail channel window.
 	// Oldest entry has weight 0, newest has weight 1.
@@ -48,9 +55,13 @@ const (
 // struct. Exported so the observation layout can be verified from tests and
 // from the Python Gymnasium env.
 type PursuerMemory struct {
-	LastSeen      geometry.Point // NewInvalidPoint when the player has never been spotted
-	TurnsSinceLOS int            // Capped at PursuerMemoryHorizon for stability
+	LastSeen      geometry.Point   // NewInvalidPoint when the player has never been spotted
+	TurnsSinceLOS int              // Capped at PursuerMemoryHorizon for stability
 	Trail         []geometry.Point
+
+	// Director/Alien two-tier state (not part of the ONNX observation).
+	FrustrationCount int  // turns in RL mode without LOS or hot scent
+	RLActive         bool // true = ONNX policy controls; false = macro/Director
 }
 
 func NewPursuerMemory() *PursuerMemory {
@@ -65,6 +76,7 @@ func NewPursuerMemory() *PursuerMemory {
 // All spatial features are relative to the Pursuer's current position. Scalars
 // are normalised into [-1, 1] where reasonable. The tensor always has length
 // ObservationSize; cells outside the map are left at 0 (treated as walls).
+// Pure function — all state is read from ctx and mem; nothing is mutated.
 func BuildObservation(ctx *model.SessionContext, actor *model.Actor, mem *PursuerMemory) []float32 {
 	obs := make([]float32, ObservationSize)
 	play := ctx.Playthrough
@@ -79,6 +91,8 @@ func BuildObservation(ctx *model.SessionContext, actor *model.Actor, mem *Pursue
 	seesPlayer := haveTarget && hasLOS(m, actor.Pos, player.Pos)
 
 	writeChannels(obs, m, actor, mem, play, player, playerCone, haveTarget, seesPlayer)
+	writeChScent(obs, ctx.ScentMaps[model.ScentMapChase], actor.Pos, m)
+	writeChAgeLastSeen(obs, mem, actor.Pos)
 	writeScalars(obs, m, actor, mem, player, playerAngle, haveTarget, seesPlayer, play)
 	return obs
 }
@@ -151,6 +165,62 @@ func writeChannels(
 			if weight > 0 {
 				setChannel(obs, ChPlayerMemory, dx+ObservationHalfCrop, dy+ObservationHalfCrop, weight)
 			}
+		}
+	}
+}
+
+// writeChScent writes the normalised Dijkstra chase-scent gradient into ChScent.
+// Hot (≈1.0) near the player, fading to 0 at ScentNormFactor BFS steps away.
+// Unreachable cells are left at 0.
+func writeChScent(obs []float32, scentMap *model.ScentMap, origin geometry.Point, m *model.Map) {
+	if scentMap == nil {
+		return
+	}
+	for dy := -ObservationHalfCrop; dy <= ObservationHalfCrop; dy++ {
+		for dx := -ObservationHalfCrop; dx <= ObservationHalfCrop; dx++ {
+			p := geometry.Point{X: origin.X + dx, Y: origin.Y + dy}
+			if !m.InBounds(p) {
+				continue
+			}
+			dist := scentMap.Scent[p.Y][p.X]
+			if dist == math.MaxInt {
+				continue // unreachable cell
+			}
+			v := 1.0 - float32(dist)/ScentNormFactor
+			if v <= 0 {
+				continue
+			}
+			setChannel(obs, ChScent, dx+ObservationHalfCrop, dy+ObservationHalfCrop, v)
+		}
+	}
+}
+
+// writeChAgeLastSeen writes a Gaussian-spread decay centred on the last known
+// player position into ChAgeLastSeen. Amplitude decays linearly with
+// TurnsSinceLOS; spatial spread uses σ=AgeLastSeenSigma cells. This gives the
+// network a directional gradient even when the player is out of the 11×11 crop.
+func writeChAgeLastSeen(obs []float32, mem *PursuerMemory, origin geometry.Point) {
+	if mem.LastSeen == model.NewInvalidPoint() {
+		return
+	}
+	amplitude := 1.0 - float32(mem.TurnsSinceLOS)/float32(PursuerMemoryHorizon)
+	if amplitude <= 0 {
+		return
+	}
+	const sigma = AgeLastSeenSigma
+	const twoSigmaSq = 2.0 * sigma * sigma
+	for dy := -ObservationHalfCrop; dy <= ObservationHalfCrop; dy++ {
+		for dx := -ObservationHalfCrop; dx <= ObservationHalfCrop; dx++ {
+			wx := origin.X + dx
+			wy := origin.Y + dy
+			ddx := float64(wx - mem.LastSeen.X)
+			ddy := float64(wy - mem.LastSeen.Y)
+			d2 := ddx*ddx + ddy*ddy
+			v := amplitude * float32(math.Exp(-d2/twoSigmaSq))
+			if v < 0.01 {
+				continue
+			}
+			setChannel(obs, ChAgeLastSeen, dx+ObservationHalfCrop, dy+ObservationHalfCrop, v)
 		}
 	}
 }

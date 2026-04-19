@@ -37,12 +37,12 @@ from gymnasium import spaces
 # Observation geometry — see rl_observation.go:22-44.
 OBSERVATION_CROP_SIZE = 11
 OBSERVATION_HALF_CROP = OBSERVATION_CROP_SIZE // 2
-OBSERVATION_CHANNELS = 7
+OBSERVATION_CHANNELS = 9  # was 7; +ChScent, +ChAgeLastSeen
 OBSERVATION_SCALARS = 12
 OBSERVATION_GRID_FLOATS = (
-    OBSERVATION_CHANNELS * OBSERVATION_CROP_SIZE * OBSERVATION_CROP_SIZE
+    OBSERVATION_CHANNELS * OBSERVATION_CROP_SIZE * OBSERVATION_CROP_SIZE  # 9*121=1089
 )
-OBSERVATION_SIZE = OBSERVATION_GRID_FLOATS + OBSERVATION_SCALARS  # 859
+OBSERVATION_SIZE = OBSERVATION_GRID_FLOATS + OBSERVATION_SCALARS  # 1101
 
 CH_WALKABLE = 0
 CH_CLOSED_DOOR = 1
@@ -51,6 +51,11 @@ CH_SELF_TRAIL = 3
 CH_PLAYER_VIS_NOW = 4
 CH_PLAYER_MEMORY = 5
 CH_PLAYER_CONE = 6
+CH_SCENT = 7         # Dijkstra chase-scent gradient
+CH_AGE_LAST_SEEN = 8  # Gaussian-spread age-of-last-seen
+
+SCENT_NORM_FACTOR = 30.0   # BFS distance → [0,1] scale
+AGE_LAST_SEEN_SIGMA = 2.5  # Gaussian spread in cells
 
 PURSUER_TRAIL_CAPACITY = 20
 PURSUER_MEMORY_HORIZON = 20
@@ -343,10 +348,14 @@ def build_observation(
     player_angle_rad: float,
     cone_mask: Optional[np.ndarray],
     other_pursuer_pos: Optional[tuple[int, int]] = None,
+    scent_map: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """
     Mirror of BuildObservation in rl_observation.go. See that file for the
     authoritative spec — any divergence here is a bug.
+
+    scent_map: int32 BFS distance grid (H×W) from player, as returned by
+               chase_scent_map(). None means ChScent stays zero.
     """
     obs = np.zeros(OBSERVATION_SIZE, dtype=np.float32)
     ox, oy = pursuer_pos
@@ -374,6 +383,14 @@ def build_observation(
             if cone_mask is not None and cone_mask[py, px]:
                 _set_channel(obs, CH_PLAYER_CONE, cx, cy, 1.0)
 
+            # ChScent — Dijkstra chase-scent gradient.
+            if scent_map is not None:
+                dist = int(scent_map[py, px])
+                if dist < 10**9:
+                    v = max(0.0, 1.0 - dist / SCENT_NORM_FACTOR)
+                    if v > 0:
+                        _set_channel(obs, CH_SCENT, cx, cy, float(v))
+
     # Self-trail — newest has weight 1, oldest has weight 1/cap.
     trail = memory.trail
     for i, tp in enumerate(trail):
@@ -387,7 +404,7 @@ def build_observation(
             continue
         _set_channel(obs, CH_SELF_TRAIL, dx + OBSERVATION_HALF_CROP, dy + OBSERVATION_HALF_CROP, weight)
 
-    # Player memory spike.
+    # Player memory spike (ChPlayerMemory — single-cell, amplitude decays with time).
     if memory.last_seen != (-1, -1):
         dx = memory.last_seen[0] - ox
         dy = memory.last_seen[1] - oy
@@ -401,6 +418,22 @@ def build_observation(
                     dy + OBSERVATION_HALF_CROP,
                     weight,
                 )
+
+    # ChAgeLastSeen — Gaussian spread from last-known player position.
+    if memory.last_seen != (-1, -1):
+        amplitude = 1.0 - memory.turns_since_los / PURSUER_MEMORY_HORIZON
+        if amplitude > 0:
+            two_sigma_sq = 2.0 * AGE_LAST_SEEN_SIGMA * AGE_LAST_SEEN_SIGMA
+            ls_x, ls_y = memory.last_seen
+            for dy in range(-OBSERVATION_HALF_CROP, OBSERVATION_HALF_CROP + 1):
+                for dx in range(-OBSERVATION_HALF_CROP, OBSERVATION_HALF_CROP + 1):
+                    wx, wy = ox + dx, oy + dy
+                    d2 = (wx - ls_x) ** 2 + (wy - ls_y) ** 2
+                    v = amplitude * math.exp(-d2 / two_sigma_sq)
+                    if v >= 0.01:
+                        cx = dx + OBSERVATION_HALF_CROP
+                        cy = dy + OBSERVATION_HALF_CROP
+                        _set_channel(obs, CH_AGE_LAST_SEEN, cx, cy, float(v))
 
     # Scalars — see writeScalars in rl_observation.go.
     s = obs[OBSERVATION_GRID_FLOATS:]
@@ -555,7 +588,9 @@ class PursuerEnv(gym.Env):
         self._prev_scent_val: Optional[int] = None
         self._cone_mask_cache: Optional[np.ndarray] = None
         self._exit_scent_cache: Optional[np.ndarray] = None
+        self._chase_scent_cache: Optional[np.ndarray] = None
         self._exit_camp_counter = 0
+        self._first_detection_done = False  # Ambush: tracks first cone-entry per episode
 
         self._fixed_profile = fixed_profile
 
@@ -581,7 +616,9 @@ class PursuerEnv(gym.Env):
         self._was_visible_to_player = False
         self._prev_scent_val = None
         self._exit_camp_counter = 0
+        self._first_detection_done = False
         self._exit_scent_cache = chase_scent_map(self.topology, self.topology.exit_point)
+        self._chase_scent_cache = chase_scent_map(self.topology, self.player_pos)
 
         # --- Domain randomization per episode ----------------------------
         if self._max_steps_range is not None:
@@ -662,6 +699,9 @@ class PursuerEnv(gym.Env):
         if self._adjacent(self.pursuer_pos, self.player_pos) and player_action != ACTION_WAIT:
             self.pursuer_hp -= self._attack_damage
 
+        # Recompute chase scent after player moved.
+        self._chase_scent_cache = chase_scent_map(self.topology, self.player_pos)
+
         # `_was_visible_to_player` carries *last turn's* visibility into
         # this turn's reward/info — that's the ambush condition.
         was_visible_before_step = self._was_visible_to_player
@@ -681,7 +721,8 @@ class PursuerEnv(gym.Env):
         )
 
         self.step_count += 1
-        terminated = self.player_hp <= 0 or self.pursuer_hp <= 0
+        player_escaped = self.player_pos == self.topology.exit_point
+        terminated = self.player_hp <= 0 or self.pursuer_hp <= 0 or player_escaped
         truncated = self.step_count >= self._max_steps
 
         # The "ambush" side-channel updates after this step's reward is computed.
@@ -795,6 +836,7 @@ class PursuerEnv(gym.Env):
             player_angle_rad=self.player_angle,
             cone_mask=self._cone_mask_cache,
             other_pursuer_pos=self.distractor_pos,
+            scent_map=self._chase_scent_cache,
         )
 
     def _compute_reward(
@@ -805,46 +847,56 @@ class PursuerEnv(gym.Env):
         pursuer_hit: bool,
     ) -> float:
         """
-        Reward breakdown:
+        Reward structure (QR-DQN):
 
-        +10  per hit landed
-        +5   ambush bonus if pursuer wasn't visible to the player last turn
-        +20  killed player (episode ends)
-        -2   pursuer dies
-        +0.1 * Δchebyshev  approach shaping — +0.1 per step closer, −0.1 per
-                  step away. Replaces Dijkstra scent-delta, which mixed Pursuer
-                  and player motion into one noisy signal and let PPO collapse
-                  to "never engage".
-        -0.1  per turn camping near exit (flat, not escalating). Previously
-                  `-0.1 * k` with cumulative `k` — if the agent ever spawned
-                  near the exit and stalled, the arithmetic-progression sum
-                  hit −2010 per episode and dominated every other signal.
-                  Resets when leaving the camp zone or when player approaches
-                  within 4 tiles — intercepting a fleeing player is legitimate.
-        -0.001 per step                (time penalty)
+        Terminal:
+          +10.0  player killed (all HP gone)
+          -15.0  player reached the exit
+          -2.0   pursuer dies
+
+        Ambush effect (first time pursuer enters player cone per episode):
+          +1.5   if dist ≤ 2  (sudden close-range appearance)
+          -1.0   if dist ≥ 5  (premature far-range detection)
+
+        Dense shaping:
+          ±0.1 * Δchebyshev    approach / retreat signal
+          -0.1 * (1 - dist_player_to_exit / max_map_dist)  exit-blocking penalty
+          -0.5  crowd: distractor already near player AND pursuer moves in
+          -0.05 * k  anti-camp: k turns within EXIT_CAMP_RADIUS of exit
+          -0.001  time penalty per step
+
         Wait action:
-          -0.1  if in the player's cone (freeze-in-spotlight: worst possible wait)
-          -0.02 if blind (turns_since_LOS > 10 — no stealth gain from stalling)
-           0    otherwise (stalking wait out of cone — allowed)
+          -0.1   if in player cone now  (freeze-in-spotlight)
+          -0.02  if blind > 10 turns   (no stealth value)
         """
         assert self.topology is not None
         r = 0.0
-        if pursuer_hit:
-            r += 10.0
-            if not self._was_visible_to_player:
-                r += 5.0
+
+        # --- Terminal rewards ---
         if self.player_hp <= 0:
-            r += 20.0
+            r += 10.0
+        if self.player_pos == self.topology.exit_point:
+            r -= 15.0
         if self.pursuer_hp <= 0:
             r -= 2.0
 
-        # Chebyshev-approach shaping. Previously Dijkstra potential shaping
-        # (0.1 * Δscent), but that signal was noisy — it mixed Pursuer motion
-        # with scripted-player motion, so PPO couldn't tell whose move caused
-        # the change. Deterministic chebyshev-delta gives +0.1 per approach
-        # step and -0.1 per retreat step regardless of player motion, which
-        # is the strong exploration gradient PPO needs before it can discover
-        # hits/ambush.
+        # --- Ambush effect: first cone-entry this episode ---
+        in_cone_now = (
+            self._cone_mask_cache is not None
+            and self._cone_mask_cache[self.pursuer_pos[1], self.pursuer_pos[0]]
+        )
+        if in_cone_now and not self._first_detection_done:
+            self._first_detection_done = True
+            dist = max(
+                abs(self.player_pos[0] - self.pursuer_pos[0]),
+                abs(self.player_pos[1] - self.pursuer_pos[1]),
+            )
+            if dist <= 2:
+                r += 1.5
+            elif dist >= 5:
+                r -= 1.0
+
+        # --- Approach shaping (Chebyshev) ---
         prev_dist = max(
             abs(self.player_pos[0] - prev_pos[0]),
             abs(self.player_pos[1] - prev_pos[1]),
@@ -855,46 +907,49 @@ class PursuerEnv(gym.Env):
         )
         r += 0.1 * (prev_dist - cur_dist)
 
-        in_cone_now = (
-            self._cone_mask_cache is not None
-            and self._cone_mask_cache[self.pursuer_pos[1], self.pursuer_pos[0]]
-        )
-        # Stealth penalty removed: -0.05 per in-cone step biased PPO toward
-        # pure hiding (eval at 500K steps: len=220, hits=0, death=0 —
-        # cowardice collapse). The cone mask is already in the observation,
-        # so the agent can learn when to hide from downstream reward (hit
-        # vs counter-attack) instead of a hand-coded prior.
+        # --- Exit-blocking penalty: proportional to player's proximity to exit ---
+        if self._exit_scent_cache is not None:
+            px, py = self.player_pos
+            player_dist_to_exit = int(self._exit_scent_cache[py, px])
+            if player_dist_to_exit < 10**9:
+                max_dist_val = int(np.max(self._exit_scent_cache[self._exit_scent_cache < 10**9]))
+                if max_dist_val > 0:
+                    r -= 0.1 * (1.0 - player_dist_to_exit / max_dist_val)
 
-        # Anti-camping: Alien: Isolation-style — the Xenomorph must not just
-        # park on the exit. Escalating penalty while within 3 chebyshev tiles
-        # of the exit, resets the moment the pursuer steps out or the player
-        # closes in (intercept is a legitimate tactic).
+        # --- Crowd penalty: punish piling onto already-covered player ---
+        if self.distractor_pos is not None:
+            dist_distractor_to_player = max(
+                abs(self.player_pos[0] - self.distractor_pos[0]),
+                abs(self.player_pos[1] - self.distractor_pos[1]),
+            )
+            if dist_distractor_to_player <= 3 and cur_dist <= 3:
+                r -= 0.5
+
+        # --- Anti-camping near exit (escalating) ---
         EXIT_CAMP_RADIUS = 3
         EXIT_CAMP_INTERCEPT_RADIUS = 4
         exit_x, exit_y = self.topology.exit_point
-        dist_to_exit = max(
+        dist_pursuer_to_exit = max(
             abs(exit_x - self.pursuer_pos[0]),
             abs(exit_y - self.pursuer_pos[1]),
         )
-        dist_to_player = max(
-            abs(self.player_pos[0] - self.pursuer_pos[0]),
-            abs(self.player_pos[1] - self.pursuer_pos[1]),
-        )
         if (
-            dist_to_exit <= EXIT_CAMP_RADIUS
-            and dist_to_player > EXIT_CAMP_INTERCEPT_RADIUS
+            dist_pursuer_to_exit <= EXIT_CAMP_RADIUS
+            and cur_dist > EXIT_CAMP_INTERCEPT_RADIUS
         ):
             self._exit_camp_counter += 1
-            r -= 0.1
+            r -= 0.05 * self._exit_camp_counter
         else:
             self._exit_camp_counter = 0
 
+        # --- Time penalty ---
         r -= 0.001
 
+        # --- Wait penalties ---
         if action == ACTION_WAIT:
             if in_cone_now:
                 r -= 0.1
             elif self.memory.turns_since_los > 10:
                 r -= 0.02
-            # else: stalking wait out of sight — permitted.
+
         return r
