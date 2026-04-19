@@ -47,3 +47,6 @@ build
 /rl/checkpoints/
 __pycache__/
 .ipynb_checkpoints/
+
+checkpoints
+__pycache__
