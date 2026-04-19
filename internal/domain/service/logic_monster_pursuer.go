@@ -9,7 +9,7 @@ import (
 
 // Director/Alien two-tier AI thresholds.
 const (
-	rlTriggerRadius    = 8  // Chebyshev cells to player → activate RL
+	rlTriggerRadius    = 8    // Chebyshev cells to player → activate RL
 	rlTriggerScent     = 0.25 // ChScent value in crop window → activate RL
 	rlFrustrationLimit = 15   // turns in RL mode without engagement → hand back to Director
 )

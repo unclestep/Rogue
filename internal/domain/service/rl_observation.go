@@ -24,7 +24,7 @@ const (
 	ObservationChannels   = 9
 	ObservationScalars    = 12
 	ObservationGridFloats = ObservationChannels * ObservationCropSize * ObservationCropSize // 9*121=1089
-	ObservationSize       = ObservationGridFloats + ObservationScalars                     // 1101
+	ObservationSize       = ObservationGridFloats + ObservationScalars                      // 1101
 
 	ChWalkable     = 0
 	ChClosedDoor   = 1
@@ -55,8 +55,8 @@ const (
 // struct. Exported so the observation layout can be verified from tests and
 // from the Python Gymnasium env.
 type PursuerMemory struct {
-	LastSeen      geometry.Point   // NewInvalidPoint when the player has never been spotted
-	TurnsSinceLOS int              // Capped at PursuerMemoryHorizon for stability
+	LastSeen      geometry.Point // NewInvalidPoint when the player has never been spotted
+	TurnsSinceLOS int            // Capped at PursuerMemoryHorizon for stability
 	Trail         []geometry.Point
 
 	// Director/Alien two-tier state (not part of the ONNX observation).

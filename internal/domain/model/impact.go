@@ -181,7 +181,6 @@ func (impact *ActorImpact) DecrementAllRelatedCharges(trigger TriggerType) {
 	impact.DecrementEffectsCharges(trigger, impact.Actor.Effects)
 	for _, gear := range impact.Actor.EquippedGear {
 		impact.DecrementEffectsCharges(trigger, gear.Effects)
-
 	}
 }
 

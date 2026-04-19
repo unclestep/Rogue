@@ -234,8 +234,14 @@ func findAdjacentTarget(world dto.GameView) *dto.Actor {
 	}
 	pr, pc := world.Player.Row, world.Player.Col
 	dirs := [8][2]int{
-		{0, -1}, {0, 1}, {-1, 0}, {1, 0},
-		{-1, -1}, {1, -1}, {-1, 1}, {1, 1},
+		{0, -1},
+		{0, 1},
+		{-1, 0},
+		{1, 0},
+		{-1, -1},
+		{1, -1},
+		{-1, 1},
+		{1, 1},
 	}
 	for _, d := range dirs {
 		r, c := pr+d[1], pc+d[0]

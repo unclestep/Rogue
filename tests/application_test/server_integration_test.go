@@ -15,8 +15,10 @@ import (
 	"github.com/unclestep/Rogue/internal/presentation/network"
 )
 
-const testSavesDir = "/tmp/gouge_test_saves"
-const testPlayerUUID = "test-player-uuid-1234"
+const (
+	testSavesDir   = "/tmp/gouge_test_saves"
+	testPlayerUUID = "test-player-uuid-1234"
+)
 
 func setupServer(t *testing.T) (*network.Server, func()) {
 	t.Helper()

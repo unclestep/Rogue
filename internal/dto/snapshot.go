@@ -166,8 +166,10 @@ type Item struct {
 	// TODO: ProcsDesc    []string
 }
 
-type ItemType string
-type ItemLabel string
+type (
+	ItemType  string
+	ItemLabel string
+)
 
 type Keyhole int
 

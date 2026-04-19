@@ -1,10 +1,11 @@
 package usecase
 
 import (
+	"time"
+
 	"github.com/unclestep/Rogue/internal/application/port"
 	"github.com/unclestep/Rogue/internal/domain/model"
 	"github.com/unclestep/Rogue/internal/domain/service"
-	"time"
 )
 
 type ResolveTurn struct {

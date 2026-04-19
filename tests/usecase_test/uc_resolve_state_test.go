@@ -7,8 +7,10 @@ import (
 	"github.com/unclestep/Rogue/internal/dto"
 )
 
-const hostUUID = "host-uuid"
-const guestUUID = "guest-uuid"
+const (
+	hostUUID  = "host-uuid"
+	guestUUID = "guest-uuid"
+)
 
 // TestResolveLobbyCreatedOnJoin verifies that sending ActionJoin with an empty
 // PlaythroughId creates a new session and returns LobbyGameState.
