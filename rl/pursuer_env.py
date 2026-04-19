@@ -540,9 +540,9 @@ class PursuerEnv(gym.Env):
         self,
         topologies_dir: str,
         player_policy: PlayerPolicyFn,
-        max_episode_steps: int = 200,
+        max_episode_steps: int = 40,
         pursuer_hp: int = 10,
-        player_hp: int = 10,
+        player_hp: int = 4,
         attack_damage: int = 2,
         seed: Optional[int] = None,
         # --- Domain randomization knobs (all default to off for back-compat) ---
@@ -550,6 +550,7 @@ class PursuerEnv(gym.Env):
         distractor_prob: float = 0.0,
         randomize_player_profile: bool = False,
         fixed_profile: str = "default",
+        spawn_radius: Optional[tuple[int, int]] = (3, 8),
     ):
         super().__init__()
         self._topology_paths = sorted(glob.glob(os.path.join(topologies_dir, "*.json")))
@@ -593,6 +594,7 @@ class PursuerEnv(gym.Env):
         self._first_detection_done = False  # Ambush: tracks first cone-entry per episode
 
         self._fixed_profile = fixed_profile
+        self._spawn_radius = spawn_radius
 
     # ------------------------------------------------------------------
     # Gymnasium API.
@@ -675,7 +677,9 @@ class PursuerEnv(gym.Env):
 
         # --- Pursuer moves --------------------------------------------------
         prev_pos = self.pursuer_pos
-        self.pursuer_pos = self._try_move(self.pursuer_pos, int(action))
+        self.pursuer_pos = self._try_move(
+            self.pursuer_pos, int(action), blocker=self.player_pos
+        )
 
         # Memory bookkeeping (mirrors PursuerBehavior.updateMemory in Go).
         self.memory.push_trail(self.pursuer_pos)
@@ -686,17 +690,43 @@ class PursuerEnv(gym.Env):
             if self.memory.turns_since_los < PURSUER_MEMORY_HORIZON:
                 self.memory.turns_since_los += 1
 
-        # Pursuer attack — adjacency check.
-        pursuer_hit = self._adjacent(self.pursuer_pos, self.player_pos)
-        if pursuer_hit and action != ACTION_WAIT:
+        # Pursuer attack — bump into player from adjacency, or WAIT while adjacent.
+        # Without the bump-style check, moving toward an adjacent player could
+        # either collide with the blocker (no hit) or miss adjacency after the
+        # step — chase-to-kill never resolved. See plan senior-ancient-stroustrup.
+        action_vec = ACTION_VECTORS.get(int(action), (0, 0))
+        bump_vec = (self.player_pos[0] - prev_pos[0], self.player_pos[1] - prev_pos[1])
+        bump_attack = (
+            self._adjacent(prev_pos, self.player_pos) and action_vec == bump_vec
+        )
+        pursuer_hit = bump_attack or (
+            self._adjacent(self.pursuer_pos, self.player_pos)
+            and int(action) == ACTION_WAIT
+        )
+        if pursuer_hit:
             self.player_hp -= self._attack_damage
 
         # --- Scripted player reacts ----------------------------------------
+        player_prev_pos = self.player_pos
         player_action, new_angle = self._player_policy(self, self._rng)
         self.player_angle = new_angle
-        self.player_pos = self._try_move(self.player_pos, player_action)
-        # Player counter-attack if adjacent (simulates the real Combat service).
-        if self._adjacent(self.pursuer_pos, self.player_pos) and player_action != ACTION_WAIT:
+        self.player_pos = self._try_move(
+            self.player_pos, player_action, blocker=self.pursuer_pos
+        )
+        # Player counter-attack — same bump-or-WAIT mechanic mirrored.
+        p_action_vec = ACTION_VECTORS.get(player_action, (0, 0))
+        p_bump_vec = (
+            self.pursuer_pos[0] - player_prev_pos[0],
+            self.pursuer_pos[1] - player_prev_pos[1],
+        )
+        player_bump = (
+            self._adjacent(player_prev_pos, self.pursuer_pos)
+            and p_action_vec == p_bump_vec
+        )
+        if player_bump or (
+            self._adjacent(self.pursuer_pos, self.player_pos)
+            and player_action == ACTION_WAIT
+        ):
             self.pursuer_hp -= self._attack_damage
 
         # Recompute chase scent after player moved.
@@ -752,25 +782,43 @@ class PursuerEnv(gym.Env):
         self._fixed_profile = fixed_profile
 
     def _place_actors(self) -> tuple[tuple[int, int], tuple[int, int]]:
-        """Place player and pursuer in different rooms when possible."""
+        """Place the player, then the pursuer within spawn_radius (Chebyshev)
+        of the player AND reachable via the BFS scent map. Matches the Go
+        two-tier production setup where RL activates inside rlTriggerRadius.
+
+        Falls back to any reachable cell if no candidate matches the radius;
+        falls back to any walkable cell on degenerate topologies.
+        """
         assert self.topology is not None
-        rooms = list(self.topology.rooms)
-        if len(rooms) >= 2:
-            self._rng.shuffle(rooms)
-            player_room, pursuer_room = rooms[0], rooms[1]
-        else:
-            player_room = pursuer_room = rooms[0]
+        walkable = self.topology.walkable_points()
+        if not walkable:
+            return (0, 0), (0, 0)
 
-        def pick(r):
-            pts = self.topology.room_walkable_points(r)
-            return self._rng.choice(pts) if pts else (0, 0)
+        player = self._rng.choice(walkable)
+        scent = chase_scent_map(self.topology, player)
 
-        # Retry once if collision happens in degenerate single-room topologies.
-        player = pick(player_room)
-        pursuer = pick(pursuer_room)
-        if pursuer == player:
-            walkable = self.topology.walkable_points()
-            pursuer = next((p for p in walkable if p != player), pursuer)
+        def reachable(p: tuple[int, int]) -> bool:
+            return int(scent[p[1], p[0]]) < 10**9
+
+        def cheb(p: tuple[int, int]) -> int:
+            return max(abs(p[0] - player[0]), abs(p[1] - player[1]))
+
+        if self._spawn_radius is not None:
+            lo, hi = self._spawn_radius
+            candidates = [
+                p for p in walkable
+                if p != player and reachable(p) and lo <= cheb(p) <= hi
+            ]
+            if candidates:
+                return self._rng.choice(candidates), player
+
+        # No radius, or no candidate matched — pick any reachable cell.
+        fallback = [p for p in walkable if p != player and reachable(p)]
+        if fallback:
+            return self._rng.choice(fallback), player
+
+        # Degenerate topology — everything unreachable; pick anything non-player.
+        pursuer = next((p for p in walkable if p != player), player)
         return pursuer, player
 
     def _place_distractor(self) -> Optional[tuple[int, int]]:
@@ -797,9 +845,16 @@ class PursuerEnv(gym.Env):
                 self.distractor_pos = (nx, ny)
                 return
 
-    def _try_move(self, pos: tuple[int, int], action: int) -> tuple[int, int]:
+    def _try_move(
+        self,
+        pos: tuple[int, int],
+        action: int,
+        blocker: Optional[tuple[int, int]] = None,
+    ) -> tuple[int, int]:
         dx, dy = ACTION_VECTORS.get(action, (0, 0))
         nx, ny = pos[0] + dx, pos[1] + dy
+        if blocker is not None and (nx, ny) == blocker:
+            return pos
         if self.topology is not None and self.topology.is_walkable(nx, ny):
             return (nx, ny)
         return pos

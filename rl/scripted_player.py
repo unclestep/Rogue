@@ -60,8 +60,9 @@ if TYPE_CHECKING:
 CARDINAL_ACTIONS = [ACTION_UP, ACTION_RIGHT, ACTION_DOWN, ACTION_LEFT]
 
 _PROFILES: dict[str, dict[str, float]] = {
+    "stone":          {"flee_prob": 0.0,  "wait_prob": 1.0,  "goal_prob": 0.0,  "panic_boost": 0.0, "angle_jitter": 0.0},
     "training_dummy": {"flee_prob": 0.0,  "wait_prob": 0.85, "goal_prob": 0.15, "panic_boost": 0.0, "angle_jitter": 0.1},
-    
+
     "default":    {"flee_prob": 0.5,  "wait_prob": 0.1,  "goal_prob": 0.75, "panic_boost": 1.0, "angle_jitter": 0.6},
     "aggressive": {"flee_prob": 0.3,  "wait_prob": 0.02, "goal_prob": 0.55, "panic_boost": 0.8, "angle_jitter": 1.0},
     "cautious":   {"flee_prob": 0.7,  "wait_prob": 0.3,  "goal_prob": 0.85, "panic_boost": 1.0, "angle_jitter": 0.2},
@@ -91,7 +92,9 @@ def scripted_player_policy(env: "PursuerEnv", rng: random.Random) -> tuple[int, 
         env._cone_mask_cache is not None
         and env._cone_mask_cache[env.pursuer_pos[1], env.pursuer_pos[0]]
     )
-    if pursuer_visible_now:
+    # Gate panic on panic_boost so "stone" / debug profiles that disable panic
+    # stay fully stationary even when the pursuer is in sight.
+    if pursuer_visible_now and panic_boost > 0:
         goal_prob = min(1.0, goal_prob * (1.0 + panic_boost))
         wait_prob = wait_prob * 0.2
         angle_jitter = min(math.pi, angle_jitter * 1.5)
