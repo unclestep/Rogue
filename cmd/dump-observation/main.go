@@ -124,7 +124,8 @@ func main() {
 
 	mem := buildMemory(sc.Memory)
 
-	ctx := &model.SessionContext{Playthrough: play}
+	play.Seed = 42 // arbitrary seed for wander maps
+	ctx := model.NewSessionContext(play)
 	obs := service.BuildObservation(ctx, pursuer, mem)
 
 	body, err := json.Marshal(output{Observation: obs})

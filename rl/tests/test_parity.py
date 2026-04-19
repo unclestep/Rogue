@@ -113,6 +113,12 @@ def _python_observation(scenario_path: Path) -> np.ndarray:
     others = scenario.get("other_monsters") or []
     other_pos = (others[0]["x"], others[0]["y"]) if others else None
 
+    from rl.pursuer_env import chase_scent_map
+
+    scent_map = None
+    if player_pos:
+        scent_map = chase_scent_map(topology, player_pos)
+
     return build_observation(
         topology=topology,
         pursuer_pos=pursuer_pos,
@@ -123,6 +129,7 @@ def _python_observation(scenario_path: Path) -> np.ndarray:
         player_angle_rad=player_angle,
         cone_mask=cone,
         other_pursuer_pos=other_pos,
+        scent_map=scent_map,
     )
 
 

@@ -62,7 +62,7 @@ def test_exit_camp_escalating_penalty_when_parked_on_exit(topology):
     env.player_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
     env._prev_scent_val = None
     env._exit_camp_counter = 0
-    env._first_detection_done = False
+    env._was_visible_before_step = False
     env._cone_mask_cache = env._compute_cone()
 
     rewards = []
@@ -226,7 +226,7 @@ def _isolate(env: PursuerEnv) -> None:
     """Null out all optional reward components."""
     env._exit_scent_cache = None
     env.distractor_pos = None
-    env._first_detection_done = True
+    env._was_visible_before_step = True
     env._exit_camp_counter = 0
     env._cone_mask_cache = np.zeros(
         (env.topology.height, env.topology.width), dtype=bool
@@ -234,7 +234,7 @@ def _isolate(env: PursuerEnv) -> None:
 
 
 def test_terminal_reward_player_caught():
-    """+10.0 when player HP reaches 0; only time penalty (-0.001) on top."""
+    """+15.0 when player HP reaches 0; only time penalty (-0.02) on top."""
     env = _make_env()
     env.reset(seed=42)
     env.player_hp = 0
@@ -244,11 +244,11 @@ def test_terminal_reward_player_caught():
     _isolate(env)
 
     r = env._compute_reward(action=ACTION_UP, prev_pos=env.pursuer_pos, pursuer_hit=False)
-    assert abs(r - 9.999) < 1e-6, f"Expected +10.0 - 0.001 = 9.999, got {r}"
+    assert abs(r - 14.98) < 1e-6, f"Expected +15.0 - 0.02 = 14.98, got {r}"
 
 
 def test_terminal_reward_player_escaped():
-    """-15.0 when player reaches exit; only time penalty on top."""
+    """-20.0 when player reaches exit; only time penalty on top."""
     env = _make_env()
     env.reset(seed=42)
     env.player_hp = 1
@@ -258,7 +258,7 @@ def test_terminal_reward_player_escaped():
     _isolate(env)
 
     r = env._compute_reward(action=ACTION_UP, prev_pos=env.pursuer_pos, pursuer_hit=False)
-    assert abs(r - (-15.001)) < 1e-6, f"Expected -15.0 - 0.001 = -15.001, got {r}"
+    assert abs(r - (-20.02)) < 1e-6, f"Expected -20.0 - 0.02 = -20.02, got {r}"
 
 
 def test_terminal_reward_pursuer_death():
@@ -272,11 +272,11 @@ def test_terminal_reward_pursuer_death():
     _isolate(env)
 
     r = env._compute_reward(action=ACTION_UP, prev_pos=env.pursuer_pos, pursuer_hit=False)
-    assert abs(r - (-2.001)) < 1e-6, f"Expected -2.0 - 0.001 = -2.001, got {r}"
+    assert abs(r - (-2.02)) < 1e-6, f"Expected -2.0 - 0.02 = -2.02, got {r}"
 
 
 def test_approach_shaping_one_step_closer():
-    """Moving one step closer to player adds exactly +0.1 reward."""
+    """Moving one step closer to player adds exactly +0.02 reward."""
     env = _make_env()
     env.reset(seed=42)
     env.player_hp = 1
@@ -296,7 +296,7 @@ def test_approach_shaping_one_step_closer():
     r_closer = env._compute_reward(action=ACTION_UP, prev_pos=prev_west, pursuer_hit=False)
 
     diff = r_closer - r_same
-    assert abs(diff - 0.1) < 1e-6, f"Approach delta expected 0.1, got {diff}"
+    assert abs(diff - 0.02) < 1e-6, f"Approach delta expected 0.02, got {diff}"
 
 
 def test_wait_in_cone_adds_exact_penalty():
@@ -309,7 +309,7 @@ def test_wait_in_cone_adds_exact_penalty():
     env.player_pos = _pick_far_cell(env, env.pursuer_pos, min_dist=5)
     env._exit_scent_cache = None
     env.distractor_pos = None
-    env._first_detection_done = True
+    env._was_visible_before_step = True
     env._exit_camp_counter = 0
     env.memory = PursuerMemory()
     env.memory.turns_since_los = 5  # not blind
@@ -341,7 +341,7 @@ def test_wait_blind_adds_exact_penalty():
     env.player_pos = _pick_far_cell(env, env.pursuer_pos, min_dist=5)
     env._exit_scent_cache = None
     env.distractor_pos = None
-    env._first_detection_done = True
+    env._was_visible_before_step = True
     env._exit_camp_counter = 0
     # No cone: only the blind penalty can fire.
     env._cone_mask_cache = np.zeros(

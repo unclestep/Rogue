@@ -591,10 +591,10 @@ class PursuerEnv(gym.Env):
         self._exit_scent_cache: Optional[np.ndarray] = None
         self._chase_scent_cache: Optional[np.ndarray] = None
         self._exit_camp_counter = 0
-        self._first_detection_done = False  # Ambush: tracks first cone-entry per episode
 
         self._fixed_profile = fixed_profile
         self._spawn_radius = spawn_radius
+        self._was_visible_before_step = False
 
     # ------------------------------------------------------------------
     # Gymnasium API.
@@ -618,7 +618,7 @@ class PursuerEnv(gym.Env):
         self._was_visible_to_player = False
         self._prev_scent_val = None
         self._exit_camp_counter = 0
-        self._first_detection_done = False
+        self._was_visible_before_step = False
         self._exit_scent_cache = chase_scent_map(self.topology, self.topology.exit_point)
         self._chase_scent_cache = chase_scent_map(self.topology, self.player_pos)
 
@@ -732,13 +732,16 @@ class PursuerEnv(gym.Env):
         # Recompute chase scent after player moved.
         self._chase_scent_cache = chase_scent_map(self.topology, self.player_pos)
 
-        # `_was_visible_to_player` carries *last turn's* visibility into
-        # this turn's reward/info — that's the ambush condition.
-        was_visible_before_step = self._was_visible_to_player
-
         # Distractor wanders randomly; it never attacks, but its presence
         # adds noise to the `other_monster` channel.
         self._advance_distractor()
+
+        # Snapshot visibility BEFORE recomputing the cone, so ambush reward
+        # can fire every time pursuer crosses from "not visible" to "visible".
+        self._was_visible_before_step = bool(
+            self._cone_mask_cache is not None
+            and self._cone_mask_cache[self.pursuer_pos[1], self.pursuer_pos[0]]
+        )
 
         # Cone snapshot after player moved/rotated — used next tick.
         self._cone_mask_cache = self._compute_cone()
@@ -767,7 +770,7 @@ class PursuerEnv(gym.Env):
             "player_hp": self.player_hp,
             "caught": self.player_hp <= 0,
             "pursuer_hit": pursuer_hit,
-            "ambush_hit": pursuer_hit and not was_visible_before_step,
+            "ambush_hit": pursuer_hit and not self._was_visible_before_step,
             "in_cone": bool(self._was_visible_to_player),
         }
         return obs, reward, terminated, truncated, info
@@ -905,20 +908,20 @@ class PursuerEnv(gym.Env):
         Reward structure (QR-DQN):
 
         Terminal:
-          +10.0  player killed (all HP gone)
-          -15.0  player reached the exit
+          +15.0  player killed (all HP gone)
+          -20.0  player reached the exit
           -2.0   pursuer dies
 
-        Ambush effect (first time pursuer enters player cone per episode):
+        Ambush effect (fires every time pursuer enters player cone from outside):
           +1.5   if dist ≤ 2  (sudden close-range appearance)
           -1.0   if dist ≥ 5  (premature far-range detection)
 
         Dense shaping:
-          ±0.1 * Δchebyshev    approach / retreat signal
+          ±0.02 * Δchebyshev   approach / retreat signal
           -0.1 * (1 - dist_player_to_exit / max_map_dist)  exit-blocking penalty
           -0.5  crowd: distractor already near player AND pursuer moves in
           -0.05 * k  anti-camp: k turns within EXIT_CAMP_RADIUS of exit
-          -0.001  time penalty per step
+          -0.02  time penalty per step
 
         Wait action:
           -0.1   if in player cone now  (freeze-in-spotlight)
@@ -929,19 +932,20 @@ class PursuerEnv(gym.Env):
 
         # --- Terminal rewards ---
         if self.player_hp <= 0:
-            r += 10.0
+            r += 15.0
         if self.player_pos == self.topology.exit_point:
-            r -= 15.0
+            r -= 20.0
         if self.pursuer_hp <= 0:
             r -= 2.0
 
-        # --- Ambush effect: first cone-entry this episode ---
+        # --- Ambush effect: fires every time pursuer enters the player cone
+        # from outside it. `_was_visible_before_step` needs to be set by the
+        # caller (step()) before _compute_reward is invoked; see step().
         in_cone_now = (
             self._cone_mask_cache is not None
             and self._cone_mask_cache[self.pursuer_pos[1], self.pursuer_pos[0]]
         )
-        if in_cone_now and not self._first_detection_done:
-            self._first_detection_done = True
+        if in_cone_now and not self._was_visible_before_step:
             dist = max(
                 abs(self.player_pos[0] - self.pursuer_pos[0]),
                 abs(self.player_pos[1] - self.pursuer_pos[1]),
@@ -960,7 +964,7 @@ class PursuerEnv(gym.Env):
             abs(self.player_pos[0] - self.pursuer_pos[0]),
             abs(self.player_pos[1] - self.pursuer_pos[1]),
         )
-        r += 0.1 * (prev_dist - cur_dist)
+        r += 0.02 * (prev_dist - cur_dist)
 
         # --- Exit-blocking penalty: proportional to player's proximity to exit ---
         if self._exit_scent_cache is not None:
@@ -998,7 +1002,7 @@ class PursuerEnv(gym.Env):
             self._exit_camp_counter = 0
 
         # --- Time penalty ---
-        r -= 0.001
+        r -= 0.02
 
         # --- Wait penalties ---
         if action == ACTION_WAIT:
