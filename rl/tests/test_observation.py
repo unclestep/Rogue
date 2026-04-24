@@ -26,20 +26,27 @@ import pytest
 
 from rl.pursuer_env import (
     CH_AGE_LAST_SEEN,
+    CH_COVERT_PATH,
     CH_PLAYER_CONE,
+    CH_PLAYER_TRAIL,
     CH_SCENT,
     CH_SELF_TRAIL,
     CH_WALKABLE,
+    COVERT_CONE_PENALTY,
+    COVERT_NORM_FACTOR,
     OBSERVATION_CROP_SIZE,
     OBSERVATION_GRID_FLOATS,
     OBSERVATION_HALF_CROP,
     OBSERVATION_SCALARS,
     OBSERVATION_SIZE,
+    PLAYER_TRAIL_DECAY,
     PursuerEnv,
     PursuerMemory,
     Topology,
     build_observation,
     chase_scent_map,
+    compute_intercept_stats,
+    covert_path_map,
     flashlight_mask,
 )
 from rl.scripted_player import scripted_player_policy
@@ -298,3 +305,158 @@ def test_env_episode_terminates_or_truncates():
             ended = True
             break
     assert ended, "Episode did not terminate or truncate within 50 steps"
+
+
+def test_observation_size_matches_spec():
+    # Guards against drift: 11 channels × 121 + 16 scalars = 1347.
+    assert OBSERVATION_SIZE == 11 * OBSERVATION_CROP_SIZE * OBSERVATION_CROP_SIZE + 16
+    assert OBSERVATION_GRID_FLOATS + OBSERVATION_SCALARS == OBSERVATION_SIZE
+    assert OBSERVATION_SCALARS == 16
+
+
+def test_covert_path_weighted_bfs_penalizes_cone():
+    # Construct a tiny-enough topology from the fixture, then assert that
+    # covert BFS from one end prefers cells outside the cone mask.
+    paths = sorted(FIXTURES.glob("*.json"))
+    topology = Topology.from_json(str(paths[0]))
+
+    walkable = set(topology.walkable_points())
+    pursuer = sorted(walkable)[0]
+    neighbour = (pursuer[0] + 1, pursuer[1])
+    if neighbour not in walkable:
+        pytest.skip("fixture has no adjacent walkable cell next to origin")
+
+    cone_free = covert_path_map(topology, pursuer, None)
+    cone = np.zeros((topology.height, topology.width), dtype=bool)
+    cone[neighbour[1], neighbour[0]] = True
+    cone_penalty = covert_path_map(topology, pursuer, cone)
+
+    # Entering a cone cell must cost COVERT_CONE_PENALTY instead of 1.
+    assert cone_free[neighbour[1], neighbour[0]] == 1
+    assert cone_penalty[neighbour[1], neighbour[0]] == COVERT_CONE_PENALTY
+
+
+def test_covert_path_channel_writes_normalized_distance(topology):
+    # ChCovertPath must hold min(d / COVERT_NORM_FACTOR, 1.0).
+    center = topology.rooms[0]["center"]
+    pursuer = (center["x"], center["y"])
+
+    obs = build_observation(
+        topology=topology,
+        pursuer_pos=pursuer,
+        pursuer_hp_frac=1.0,
+        pursuer_stamina_frac=1.0,
+        memory=PursuerMemory(),
+        player_pos=None,
+        player_angle_rad=0.0,
+        cone_mask=None,
+        covert_map=covert_path_map(topology, pursuer, None),
+    )
+    grid = obs[:OBSERVATION_GRID_FLOATS].reshape(
+        -1, OBSERVATION_CROP_SIZE, OBSERVATION_CROP_SIZE
+    )
+    # Origin distance = 0 → normalized 0.
+    assert (
+        grid[CH_COVERT_PATH, OBSERVATION_HALF_CROP, OBSERVATION_HALF_CROP] == 0.0
+    )
+
+
+def test_player_trail_channel_decays_over_time(topology):
+    # Newest position must read 1.0, one-step-older decays by PLAYER_TRAIL_DECAY.
+    center = topology.rooms[0]["center"]
+    pursuer = (center["x"], center["y"])
+    # Three cells in a row, newest last.
+    trail = [
+        (pursuer[0] - 2, pursuer[1]),
+        (pursuer[0] - 1, pursuer[1]),
+        pursuer,
+    ]
+    obs = build_observation(
+        topology=topology,
+        pursuer_pos=pursuer,
+        pursuer_hp_frac=1.0,
+        pursuer_stamina_frac=1.0,
+        memory=PursuerMemory(),
+        player_pos=None,
+        player_angle_rad=0.0,
+        cone_mask=None,
+        player_trail=trail,
+    )
+    grid = obs[:OBSERVATION_GRID_FLOATS].reshape(
+        -1, OBSERVATION_CROP_SIZE, OBSERVATION_CROP_SIZE
+    )
+    ch = grid[CH_PLAYER_TRAIL]
+    # Newest (dx=0, dy=0) — intensity 1.0
+    assert ch[OBSERVATION_HALF_CROP, OBSERVATION_HALF_CROP] == pytest.approx(1.0)
+    # Previous (dx=-1) — intensity PLAYER_TRAIL_DECAY ^ 1
+    assert ch[OBSERVATION_HALF_CROP, OBSERVATION_HALF_CROP - 1] == pytest.approx(
+        PLAYER_TRAIL_DECAY, rel=1e-5
+    )
+    # Oldest (dx=-2) — intensity PLAYER_TRAIL_DECAY ^ 2
+    assert ch[OBSERVATION_HALF_CROP, OBSERVATION_HALF_CROP - 2] == pytest.approx(
+        PLAYER_TRAIL_DECAY**2, rel=1e-5
+    )
+
+
+def test_intercept_scalar_signed(topology):
+    # Crafted small scenario: stats should be within clamps; fall back to
+    # zeros when no stats passed.
+    pursuer = (topology.exit_point[0], topology.exit_point[1])
+    # Pick a reachable player cell away from exit.
+    exit_scent = chase_scent_map(topology, topology.exit_point)
+    INF = 10**9
+    candidate = None
+    for (x, y) in topology.walkable_points():
+        if 5 <= int(exit_scent[y, x]) < INF:
+            candidate = (x, y)
+            break
+    assert candidate is not None
+    player = candidate
+    chase = chase_scent_map(topology, player)
+    stats = compute_intercept_stats(exit_scent, chase, pursuer, player)
+    assert 0.0 <= stats[0] <= 1.0
+    assert 0.0 <= stats[1] <= 1.0
+    assert -1.0 <= stats[2] <= 1.0
+
+
+def test_is_corridor_scalar_reflects_tile_type(topology):
+    # Find a corridor tile; is_corridor must come through as 1.0.
+    from rl.pursuer_env import TILE_CORRIDOR
+
+    corridor = None
+    for y in range(topology.height):
+        for x in range(topology.width):
+            if topology.tiles[y, x] == TILE_CORRIDOR:
+                corridor = (x, y)
+                break
+        if corridor:
+            break
+    if corridor is None:
+        pytest.skip("fixture has no corridor tile")
+
+    pursuer_pos = (topology.rooms[0]["center"]["x"], topology.rooms[0]["center"]["y"])
+    obs = build_observation(
+        topology=topology,
+        pursuer_pos=pursuer_pos,
+        pursuer_hp_frac=1.0,
+        pursuer_stamina_frac=1.0,
+        memory=PursuerMemory(),
+        player_pos=corridor,
+        player_angle_rad=0.0,
+        cone_mask=None,
+        is_corridor=1.0,
+    )
+    assert obs[OBSERVATION_GRID_FLOATS + 15] == pytest.approx(1.0)
+
+    obs_room = build_observation(
+        topology=topology,
+        pursuer_pos=pursuer_pos,
+        pursuer_hp_frac=1.0,
+        pursuer_stamina_frac=1.0,
+        memory=PursuerMemory(),
+        player_pos=pursuer_pos,
+        player_angle_rad=0.0,
+        cone_mask=None,
+        is_corridor=0.0,
+    )
+    assert obs_room[OBSERVATION_GRID_FLOATS + 15] == pytest.approx(0.0)

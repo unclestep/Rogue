@@ -37,12 +37,12 @@ from gymnasium import spaces
 # Observation geometry — see rl_observation.go:22-44.
 OBSERVATION_CROP_SIZE = 11
 OBSERVATION_HALF_CROP = OBSERVATION_CROP_SIZE // 2
-OBSERVATION_CHANNELS = 9  # was 7; +ChScent, +ChAgeLastSeen
-OBSERVATION_SCALARS = 12
+OBSERVATION_CHANNELS = 11  # +CH_COVERT_PATH (9), +CH_PLAYER_TRAIL (10)
+OBSERVATION_SCALARS = 16   # +4 intercept/exit scalars
 OBSERVATION_GRID_FLOATS = (
-    OBSERVATION_CHANNELS * OBSERVATION_CROP_SIZE * OBSERVATION_CROP_SIZE  # 9*121=1089
+    OBSERVATION_CHANNELS * OBSERVATION_CROP_SIZE * OBSERVATION_CROP_SIZE  # 11*121=1331
 )
-OBSERVATION_SIZE = OBSERVATION_GRID_FLOATS + OBSERVATION_SCALARS  # 1101
+OBSERVATION_SIZE = OBSERVATION_GRID_FLOATS + OBSERVATION_SCALARS  # 1347
 
 CH_WALKABLE = 0
 CH_CLOSED_DOOR = 1
@@ -53,9 +53,15 @@ CH_PLAYER_MEMORY = 5
 CH_PLAYER_CONE = 6
 CH_SCENT = 7         # Dijkstra chase-scent gradient
 CH_AGE_LAST_SEEN = 8  # Gaussian-spread age-of-last-seen
+CH_COVERT_PATH = 9   # cone-weighted Dijkstra from pursuer — stealth-aware gradient
+CH_PLAYER_TRAIL = 10  # recent player positions, exponential decay per turn
 
 SCENT_NORM_FACTOR = 30.0   # BFS distance → [0,1] scale
 AGE_LAST_SEEN_SIGMA = 2.5  # Gaussian spread in cells
+COVERT_CONE_PENALTY = 10   # step cost multiplier for cells inside player cone
+COVERT_NORM_FACTOR = 50.0  # weighted-BFS distance → [0,1] scale
+PLAYER_TRAIL_CAPACITY = 30   # turns of player-trail history
+PLAYER_TRAIL_DECAY = 0.9     # per-turn intensity decay (newest=1.0)
 
 PURSUER_TRAIL_CAPACITY = 20
 PURSUER_MEMORY_HORIZON = 20
@@ -349,6 +355,10 @@ def build_observation(
     cone_mask: Optional[np.ndarray],
     other_pursuer_pos: Optional[tuple[int, int]] = None,
     scent_map: Optional[np.ndarray] = None,
+    covert_map: Optional[np.ndarray] = None,
+    player_trail: Optional[list[tuple[int, int]]] = None,
+    intercept_stats: Optional[tuple[float, float, float]] = None,
+    is_corridor: float = 0.0,
 ) -> np.ndarray:
     """
     Mirror of BuildObservation in rl_observation.go. See that file for the
@@ -356,6 +366,13 @@ def build_observation(
 
     scent_map: int32 BFS distance grid (H×W) from player, as returned by
                chase_scent_map(). None means ChScent stays zero.
+    covert_map: int32 weighted-BFS distance grid from pursuer, as returned by
+               covert_path_map(). None means CH_COVERT_PATH stays zero.
+    player_trail: recent player positions, newest last. Plotted with decay
+               PLAYER_TRAIL_DECAY^age.
+    intercept_stats: tuple (player_to_exit_norm, pursuer_to_player_norm,
+               intercept_advantage_signed) from PursuerEnv._intercept_stats().
+    is_corridor: 1.0 if the player is currently on a corridor tile, else 0.
     """
     obs = np.zeros(OBSERVATION_SIZE, dtype=np.float32)
     ox, oy = pursuer_pos
@@ -435,6 +452,49 @@ def build_observation(
                         cy = dy + OBSERVATION_HALF_CROP
                         _set_channel(obs, CH_AGE_LAST_SEEN, cx, cy, float(v))
 
+    # CH_COVERT_PATH — cone-weighted shortest-path distance from pursuer.
+    # Clip to [0, 1]; unreachable cells read 1.0 (furthest possible).
+    if covert_map is not None:
+        for dy in range(-OBSERVATION_HALF_CROP, OBSERVATION_HALF_CROP + 1):
+            for dx in range(-OBSERVATION_HALF_CROP, OBSERVATION_HALF_CROP + 1):
+                wx, wy = ox + dx, oy + dy
+                if not topology.in_bounds(wx, wy):
+                    continue
+                d = int(covert_map[wy, wx])
+                cx = dx + OBSERVATION_HALF_CROP
+                cy = dy + OBSERVATION_HALF_CROP
+                if d >= 10**9:
+                    _set_channel(obs, CH_COVERT_PATH, cx, cy, 1.0)
+                else:
+                    _set_channel(
+                        obs,
+                        CH_COVERT_PATH,
+                        cx,
+                        cy,
+                        float(min(d / COVERT_NORM_FACTOR, 1.0)),
+                    )
+
+    # CH_PLAYER_TRAIL — recent player positions with exponential decay.
+    # Newest position has intensity 1.0; each step back multiplies by decay.
+    if player_trail:
+        trail_window = player_trail[-PLAYER_TRAIL_CAPACITY:]
+        for i, (tx, ty) in enumerate(reversed(trail_window)):
+            intensity = PLAYER_TRAIL_DECAY ** i
+            if intensity < 1e-3:
+                break
+            dxp = tx - ox
+            dyp = ty - oy
+            cx = dxp + OBSERVATION_HALF_CROP
+            cy = dyp + OBSERVATION_HALF_CROP
+            if 0 <= cx < OBSERVATION_CROP_SIZE and 0 <= cy < OBSERVATION_CROP_SIZE:
+                cur = obs[
+                    CH_PLAYER_TRAIL * OBSERVATION_CROP_SIZE * OBSERVATION_CROP_SIZE
+                    + cy * OBSERVATION_CROP_SIZE
+                    + cx
+                ]
+                if intensity > cur:
+                    _set_channel(obs, CH_PLAYER_TRAIL, cx, cy, float(intensity))
+
     # Scalars — see writeScalars in rl_observation.go.
     s = obs[OBSERVATION_GRID_FLOATS:]
     s[0] = float(np.clip(pursuer_hp_frac, 0.0, 1.0))
@@ -480,6 +540,13 @@ def build_observation(
                 + (oy - player_pos[1]) * math.sin(player_angle_rad)
             ) / n
 
+    if intercept_stats is not None:
+        player_to_exit_norm, pursuer_to_player_norm, intercept_advantage = intercept_stats
+        s[12] = float(max(0.0, min(1.0, player_to_exit_norm)))
+        s[13] = float(max(0.0, min(1.0, pursuer_to_player_norm)))
+        s[14] = float(max(-1.0, min(1.0, intercept_advantage)))
+    s[15] = float(max(0.0, min(1.0, is_corridor)))
+
     return obs
 
 
@@ -507,6 +574,89 @@ def chase_scent_map(topology: Topology, player_pos: tuple[int, int]) -> np.ndarr
                 scent[ny, nx] = scent[cy, cx] + 1
                 q.append((nx, ny))
     return scent
+
+
+def compute_intercept_stats(
+    exit_scent: np.ndarray,
+    chase_scent: np.ndarray,
+    pursuer_pos: tuple[int, int],
+    player_pos: tuple[int, int],
+) -> tuple[float, float, float]:
+    # Returns (player_to_exit_norm, pursuer_to_player_norm, intercept_advantage).
+    # Mirror of computeInterceptStats in rl_observation.go — any divergence
+    # breaks parity on scalars 12/13/14.
+    INF = 10**9
+    walkable = exit_scent < INF
+    max_dist = int(exit_scent[walkable].max()) if walkable.any() else 1
+    max_dist = max(max_dist, 1)
+
+    px, py = player_pos
+    ox, oy = pursuer_pos
+
+    player_to_exit = (
+        int(exit_scent[py, px]) if exit_scent[py, px] < INF else max_dist
+    )
+    pursuer_to_player = (
+        int(chase_scent[oy, ox]) if chase_scent[oy, ox] < INF else max_dist
+    )
+
+    pursuer_time = chase_scent
+    player_time = np.maximum(player_to_exit - exit_scent, 0)
+    reachable = (
+        (chase_scent < INF)
+        & (exit_scent < INF)
+        & (exit_scent <= player_to_exit)
+    )
+    if reachable.any():
+        meet_time = np.where(
+            reachable, np.maximum(pursuer_time, player_time), INF
+        )
+        pursuer_to_intercept = int(meet_time.min())
+    else:
+        pursuer_to_intercept = pursuer_to_player
+
+    return (
+        player_to_exit / max_dist,
+        min(pursuer_to_player / max_dist, 1.0),
+        max(-1.0, min(1.0, (player_to_exit - pursuer_to_intercept) / max_dist)),
+    )
+
+
+def covert_path_map(
+    topology: Topology,
+    pursuer_pos: tuple[int, int],
+    cone_mask: Optional[np.ndarray],
+    cone_penalty: int = COVERT_CONE_PENALTY,
+) -> np.ndarray:
+    # Dijkstra from pursuer. Cells inside the player cone cost `cone_penalty`
+    # to enter; everything else costs 1. Encodes a stealth-aware gradient: the
+    # policy sees routes that avoid the cone when any alternative exists and
+    # only crosses the cone when there is no other path. 4-cardinal to match
+    # the action space. Returns the raw distance grid (not normalized).
+    import heapq
+
+    INF = 10**9
+    H, W = topology.height, topology.width
+    dist = np.full((H, W), INF, dtype=np.int32)
+    px, py = pursuer_pos
+    if not topology.in_bounds(px, py):
+        return dist
+    dist[py, px] = 0
+    pq: list[tuple[int, int, int]] = [(0, px, py)]
+    while pq:
+        d, cx, cy = heapq.heappop(pq)
+        if d > dist[cy, cx]:
+            continue
+        for dx, dy in ((0, -1), (1, 0), (0, 1), (-1, 0)):
+            nx, ny = cx + dx, cy + dy
+            if not topology.is_walkable(nx, ny):
+                continue
+            step_cost = cone_penalty if (cone_mask is not None and cone_mask[ny, nx]) else 1
+            nd = d + step_cost
+            if nd < dist[ny, nx]:
+                dist[ny, nx] = nd
+                heapq.heappush(pq, (nd, nx, ny))
+    return dist
 
 
 # ---------------------------------------------------------------------------
@@ -584,12 +734,14 @@ class PursuerEnv(gym.Env):
         self.player_profile: str = "default"
         self.distractor_pos: Optional[tuple[int, int]] = None
         self.memory = PursuerMemory()
+        self.player_trail: list[tuple[int, int]] = []
         self.step_count = 0
         self._was_visible_to_player = False
         self._prev_scent_val: Optional[int] = None
         self._cone_mask_cache: Optional[np.ndarray] = None
         self._exit_scent_cache: Optional[np.ndarray] = None
         self._chase_scent_cache: Optional[np.ndarray] = None
+        self._covert_map_cache: Optional[np.ndarray] = None
         self._exit_camp_counter = 0
 
         self._fixed_profile = fixed_profile
@@ -614,6 +766,7 @@ class PursuerEnv(gym.Env):
         self.pursuer_stamina_frac = self._rng.uniform(0.3, 1.0)
         self.player_angle = self._rng.uniform(-math.pi, math.pi)
         self.memory = PursuerMemory()
+        self.player_trail = [self.player_pos]
         self.step_count = 0
         self._was_visible_to_player = False
         self._prev_scent_val = None
@@ -621,6 +774,7 @@ class PursuerEnv(gym.Env):
         self._was_visible_before_step = False
         self._exit_scent_cache = chase_scent_map(self.topology, self.topology.exit_point)
         self._chase_scent_cache = chase_scent_map(self.topology, self.player_pos)
+        self._covert_map_cache = None
 
         # --- Domain randomization per episode ----------------------------
         if self._max_steps_range is not None:
@@ -713,6 +867,9 @@ class PursuerEnv(gym.Env):
         self.player_pos = self._try_move(
             self.player_pos, player_action, blocker=self.pursuer_pos
         )
+        self.player_trail.append(self.player_pos)
+        if len(self.player_trail) > PLAYER_TRAIL_CAPACITY:
+            self.player_trail = self.player_trail[-PLAYER_TRAIL_CAPACITY:]
         # Player counter-attack — same bump-or-WAIT mechanic mirrored.
         p_action_vec = ACTION_VECTORS.get(player_action, (0, 0))
         p_bump_vec = (
@@ -878,12 +1035,26 @@ class PursuerEnv(gym.Env):
             )
         return self._exit_scent_cache
 
+    def _intercept_stats(self) -> tuple[float, float, float]:
+        assert self.topology is not None
+        return compute_intercept_stats(
+            self.exit_scent_map(),
+            chase_scent_map(self.topology, self.player_pos),
+            self.pursuer_pos,
+            self.player_pos,
+        )
+
     def _compute_cone(self) -> np.ndarray:
         assert self.topology is not None
         return flashlight_mask(self.topology, self.player_pos, self.player_angle)
 
     def _observe(self) -> np.ndarray:
         assert self.topology is not None
+        covert = covert_path_map(
+            self.topology, self.pursuer_pos, self._cone_mask_cache
+        )
+        tile = int(self.topology.tiles[self.player_pos[1], self.player_pos[0]])
+        is_corridor = 1.0 if tile == TILE_CORRIDOR else 0.0
         return build_observation(
             topology=self.topology,
             pursuer_pos=self.pursuer_pos,
@@ -895,6 +1066,10 @@ class PursuerEnv(gym.Env):
             cone_mask=self._cone_mask_cache,
             other_pursuer_pos=self.distractor_pos,
             scent_map=self._chase_scent_cache,
+            covert_map=covert,
+            player_trail=self.player_trail,
+            intercept_stats=self._intercept_stats(),
+            is_corridor=is_corridor,
         )
 
     def _compute_reward(

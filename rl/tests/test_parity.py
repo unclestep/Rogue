@@ -26,9 +26,12 @@ import pytest
 
 from rl.pursuer_env import (
     OBSERVATION_SIZE,
+    TILE_CORRIDOR,
     PursuerMemory,
     Topology,
     build_observation,
+    compute_intercept_stats,
+    covert_path_map,
     flashlight_mask,
 )
 
@@ -110,14 +113,27 @@ def _python_observation(scenario_path: Path) -> np.ndarray:
     for p in mem_spec.get("trail", []):
         memory.push_trail((p["x"], p["y"]))
 
+    player_trail: list[tuple[int, int]] = [
+        (p["x"], p["y"]) for p in mem_spec.get("player_trail", [])
+    ]
+
     others = scenario.get("other_monsters") or []
     other_pos = (others[0]["x"], others[0]["y"]) if others else None
 
     from rl.pursuer_env import chase_scent_map
 
     scent_map = None
+    intercept_stats = None
+    is_corridor = 0.0
+    covert = covert_path_map(topology, pursuer_pos, cone)
     if player_pos:
         scent_map = chase_scent_map(topology, player_pos)
+        exit_scent = chase_scent_map(topology, topology.exit_point)
+        intercept_stats = compute_intercept_stats(
+            exit_scent, scent_map, pursuer_pos, player_pos
+        )
+        if topology.tiles[player_pos[1], player_pos[0]] == TILE_CORRIDOR:
+            is_corridor = 1.0
 
     return build_observation(
         topology=topology,
@@ -130,6 +146,10 @@ def _python_observation(scenario_path: Path) -> np.ndarray:
         cone_mask=cone,
         other_pursuer_pos=other_pos,
         scent_map=scent_map,
+        covert_map=covert,
+        player_trail=player_trail,
+        intercept_stats=intercept_stats,
+        is_corridor=is_corridor,
     )
 
 

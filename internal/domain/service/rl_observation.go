@@ -1,6 +1,7 @@
 package service
 
 import (
+	"container/heap"
 	"math"
 
 	"github.com/unclestep/Rogue/internal/domain/model"
@@ -21,10 +22,10 @@ import (
 const (
 	ObservationCropSize   = 11
 	ObservationHalfCrop   = ObservationCropSize / 2
-	ObservationChannels   = 9
-	ObservationScalars    = 12
-	ObservationGridFloats = ObservationChannels * ObservationCropSize * ObservationCropSize // 9*121=1089
-	ObservationSize       = ObservationGridFloats + ObservationScalars                      // 1101
+	ObservationChannels   = 11 // +ChCovertPath, +ChPlayerTrail
+	ObservationScalars    = 16 // +4 intercept/exit scalars
+	ObservationGridFloats = ObservationChannels * ObservationCropSize * ObservationCropSize // 11*121=1331
+	ObservationSize       = ObservationGridFloats + ObservationScalars                      // 1347
 
 	ChWalkable     = 0
 	ChClosedDoor   = 1
@@ -33,13 +34,24 @@ const (
 	ChPlayerVisNow = 4
 	ChPlayerMemory = 5
 	ChPlayerCone   = 6
-	ChScent        = 7 // Dijkstra chase-scent gradient: hot near player, fades with distance
-	ChAgeLastSeen  = 8 // Gaussian-spread decay around last-known player position
+	ChScent        = 7  // Dijkstra chase-scent gradient: hot near player, fades with distance
+	ChAgeLastSeen  = 8  // Gaussian-spread decay around last-known player position
+	ChCovertPath   = 9  // cone-weighted Dijkstra from pursuer — stealth-aware gradient
+	ChPlayerTrail  = 10 // recent player positions, exponential decay per turn
 
 	// ScentNormFactor is the BFS-distance scale for ChScent normalisation.
 	ScentNormFactor = 30.0
 	// AgeLastSeenSigma is the Gaussian spread (cells) for ChAgeLastSeen.
 	AgeLastSeenSigma = 2.5
+	// CovertConePenalty is the step cost of entering a cone cell in the
+	// weighted-BFS that produces ChCovertPath.
+	CovertConePenalty = 10
+	// CovertNormFactor is the distance scale for ChCovertPath normalisation.
+	CovertNormFactor = 50.0
+	// PlayerTrailCapacity bounds the player-trail ring buffer.
+	PlayerTrailCapacity = 30
+	// PlayerTrailDecay is the per-turn intensity multiplier for older entries.
+	PlayerTrailDecay = 0.9
 
 	// PursuerTrailCapacity bounds the self-trail channel window.
 	// Oldest entry has weight 0, newest has weight 1.
@@ -58,6 +70,7 @@ type PursuerMemory struct {
 	LastSeen      geometry.Point // NewInvalidPoint when the player has never been spotted
 	TurnsSinceLOS int            // Capped at PursuerMemoryHorizon for stability
 	Trail         []geometry.Point
+	PlayerTrail   []geometry.Point // Ring buffer of recent player positions, newest last
 
 	// Director/Alien two-tier state (not part of the ONNX observation).
 	FrustrationCount int  // turns in RL mode without LOS or hot scent
@@ -69,6 +82,7 @@ func NewPursuerMemory() *PursuerMemory {
 		LastSeen:      model.NewInvalidPoint(),
 		TurnsSinceLOS: PursuerMemoryHorizon,
 		Trail:         make([]geometry.Point, 0, PursuerTrailCapacity),
+		PlayerTrail:   make([]geometry.Point, 0, PlayerTrailCapacity),
 	}
 }
 
@@ -93,7 +107,9 @@ func BuildObservation(ctx *model.SessionContext, actor *model.Actor, mem *Pursue
 	writeChannels(obs, m, actor, mem, play, player, playerCone, haveTarget, seesPlayer)
 	writeChScent(obs, ctx.ScentMaps[model.ScentMapChase], actor.Pos, m)
 	writeChAgeLastSeen(obs, mem, actor.Pos)
-	writeScalars(obs, m, actor, mem, player, playerAngle, haveTarget, seesPlayer, play)
+	writeChCovertPath(obs, m, actor.Pos, playerCone)
+	writeChPlayerTrail(obs, mem, actor.Pos)
+	writeScalars(obs, ctx, m, actor, mem, player, playerAngle, haveTarget, seesPlayer, play)
 	return obs
 }
 
@@ -225,8 +241,233 @@ func writeChAgeLastSeen(obs []float32, mem *PursuerMemory, origin geometry.Point
 	}
 }
 
+// writeChCovertPath writes the normalised cone-weighted Dijkstra distance from
+// the pursuer into ChCovertPath. Cells inside the player's cone cost
+// CovertConePenalty to enter; free cells cost 1. Normalised by
+// CovertNormFactor and clipped to [0, 1]. Unreachable cells (incl. cells
+// outside the map) read 1.0. Gives the policy a stealth-aware gradient that
+// the policy can use to plan approaches that avoid the cone when any
+// alternative exists.
+func writeChCovertPath(
+	obs []float32,
+	m *model.Map,
+	origin geometry.Point,
+	playerCone *model.VisibleArea,
+) {
+	dist := weightedBFSFromPursuer(m, origin, playerCone, CovertConePenalty)
+	for dy := -ObservationHalfCrop; dy <= ObservationHalfCrop; dy++ {
+		for dx := -ObservationHalfCrop; dx <= ObservationHalfCrop; dx++ {
+			p := geometry.Point{X: origin.X + dx, Y: origin.Y + dy}
+			if !m.InBounds(p) {
+				continue
+			}
+			d := dist[p.Y][p.X]
+			cx := dx + ObservationHalfCrop
+			cy := dy + ObservationHalfCrop
+			if d == math.MaxInt {
+				setChannel(obs, ChCovertPath, cx, cy, 1.0)
+				continue
+			}
+			v := float32(d) / float32(CovertNormFactor)
+			if v > 1.0 {
+				v = 1.0
+			}
+			setChannel(obs, ChCovertPath, cx, cy, v)
+		}
+	}
+}
+
+// writeChPlayerTrail lays the recent player positions into ChPlayerTrail,
+// with the most recent entry at intensity 1.0 and each older entry multiplied
+// by PlayerTrailDecay. Older entries overwrite only if they dominate (max
+// rather than sum) so a visited cell keeps the strongest observation. Mirrors
+// build_observation's handling in Python.
+func writeChPlayerTrail(obs []float32, mem *PursuerMemory, origin geometry.Point) {
+	if len(mem.PlayerTrail) == 0 {
+		return
+	}
+	n := len(mem.PlayerTrail)
+	start := 0
+	if n > PlayerTrailCapacity {
+		start = n - PlayerTrailCapacity
+	}
+	window := mem.PlayerTrail[start:]
+	for i := len(window) - 1; i >= 0; i-- {
+		age := len(window) - 1 - i
+		intensity := float32(math.Pow(PlayerTrailDecay, float64(age)))
+		if intensity < 1e-3 {
+			break
+		}
+		dx := window[i].X - origin.X
+		dy := window[i].Y - origin.Y
+		cx := dx + ObservationHalfCrop
+		cy := dy + ObservationHalfCrop
+		if cx < 0 || cx >= ObservationCropSize || cy < 0 || cy >= ObservationCropSize {
+			continue
+		}
+		cur := obs[ChPlayerTrail*ObservationCropSize*ObservationCropSize+cy*ObservationCropSize+cx]
+		if intensity > cur {
+			setChannel(obs, ChPlayerTrail, cx, cy, intensity)
+		}
+	}
+}
+
+// weightedBFSFromPursuer runs a 4-cardinal Dijkstra from origin where cells
+// inside `cone` cost conePenalty to enter and other walkable cells cost 1.
+// Returns a distance grid sized (m.Height × m.Width). Unreachable cells are
+// math.MaxInt. Out-of-bounds origin returns an all-MaxInt grid.
+func weightedBFSFromPursuer(
+	m *model.Map,
+	origin geometry.Point,
+	cone *model.VisibleArea,
+	conePenalty int,
+) [][]int {
+	dist := make([][]int, m.Height)
+	for y := range dist {
+		row := make([]int, m.Width)
+		for x := range row {
+			row[x] = math.MaxInt
+		}
+		dist[y] = row
+	}
+	if !m.InBounds(origin) {
+		return dist
+	}
+	dist[origin.Y][origin.X] = 0
+	pq := &weightedBFSQueue{}
+	heap.Init(pq)
+	heap.Push(pq, weightedBFSNode{d: 0, x: origin.X, y: origin.Y})
+	dirs := [4][2]int{{0, -1}, {1, 0}, {0, 1}, {-1, 0}}
+	for pq.Len() > 0 {
+		cur := heap.Pop(pq).(weightedBFSNode)
+		if cur.d > dist[cur.y][cur.x] {
+			continue
+		}
+		for _, d := range dirs {
+			nx := cur.x + d[0]
+			ny := cur.y + d[1]
+			np := geometry.Point{X: nx, Y: ny}
+			if !m.IsWalkable(np) {
+				continue
+			}
+			cost := 1
+			if cone != nil && cone.Area[ny][nx] == model.Visible {
+				cost = conePenalty
+			}
+			nd := cur.d + cost
+			if nd < dist[ny][nx] {
+				dist[ny][nx] = nd
+				heap.Push(pq, weightedBFSNode{d: nd, x: nx, y: ny})
+			}
+		}
+	}
+	return dist
+}
+
+type weightedBFSNode struct {
+	d int
+	x int
+	y int
+}
+
+type weightedBFSQueue []weightedBFSNode
+
+func (q weightedBFSQueue) Len() int           { return len(q) }
+func (q weightedBFSQueue) Less(i, j int) bool { return q[i].d < q[j].d }
+func (q weightedBFSQueue) Swap(i, j int)      { q[i], q[j] = q[j], q[i] }
+func (q *weightedBFSQueue) Push(v any)        { *q = append(*q, v.(weightedBFSNode)) }
+func (q *weightedBFSQueue) Pop() any {
+	old := *q
+	n := len(old)
+	v := old[n-1]
+	*q = old[:n-1]
+	return v
+}
+
+// computeInterceptStats mirrors PursuerEnv._intercept_stats in Python. Returns
+// (player_to_exit_norm, pursuer_to_player_norm, intercept_advantage_signed).
+// Falls back to zeros when scent maps are missing.
+func computeInterceptStats(
+	exitScent *model.ScentMap,
+	chaseScent *model.ScentMap,
+	pursuer geometry.Point,
+	player geometry.Point,
+) (float32, float32, float32) {
+	if exitScent == nil || chaseScent == nil {
+		return 0, 0, 0
+	}
+	exit := exitScent.Scent
+	chase := chaseScent.Scent
+	if len(exit) == 0 || len(chase) == 0 {
+		return 0, 0, 0
+	}
+	if player.Y < 0 || player.Y >= len(exit) || player.X < 0 || player.X >= len(exit[0]) {
+		return 0, 0, 0
+	}
+	if pursuer.Y < 0 || pursuer.Y >= len(chase) || pursuer.X < 0 || pursuer.X >= len(chase[0]) {
+		return 0, 0, 0
+	}
+
+	maxDist := 1
+	for y := range exit {
+		for x := range exit[y] {
+			v := exit[y][x]
+			if v != math.MaxInt && v > maxDist {
+				maxDist = v
+			}
+		}
+	}
+
+	playerToExit := exit[player.Y][player.X]
+	if playerToExit == math.MaxInt {
+		playerToExit = maxDist
+	}
+	pursuerToPlayer := chase[pursuer.Y][pursuer.X]
+	if pursuerToPlayer == math.MaxInt {
+		pursuerToPlayer = maxDist
+	}
+
+	pursuerToIntercept := pursuerToPlayer
+	minMeet := math.MaxInt
+	for y := range exit {
+		for x := range exit[y] {
+			ev := exit[y][x]
+			cv := chase[y][x]
+			if ev == math.MaxInt || cv == math.MaxInt {
+				continue
+			}
+			if ev > playerToExit {
+				continue
+			}
+			playerTime := max(playerToExit-ev, 0)
+			meet := max(cv, playerTime)
+			if meet < minMeet {
+				minMeet = meet
+			}
+		}
+	}
+	if minMeet != math.MaxInt {
+		pursuerToIntercept = minMeet
+	}
+
+	p2e := float32(playerToExit) / float32(maxDist)
+	p2p := float32(pursuerToPlayer) / float32(maxDist)
+	if p2p > 1 {
+		p2p = 1
+	}
+	adv := float32(playerToExit-pursuerToIntercept) / float32(maxDist)
+	if adv > 1 {
+		adv = 1
+	}
+	if adv < -1 {
+		adv = -1
+	}
+	return p2e, p2p, adv
+}
+
 func writeScalars(
 	obs []float32,
+	ctx *model.SessionContext,
 	m *model.Map,
 	actor *model.Actor,
 	mem *PursuerMemory,
@@ -282,6 +523,21 @@ func writeScalars(
 		n := float32(math.Hypot(float64(dx), float64(dy)))
 		if n > 0 {
 			s[11] = (dx*coneDirX + dy*coneDirY) / n
+		}
+	}
+
+	// Intercept / exit-awareness scalars. Defaults to zero when we cannot
+	// compute them (no target, map-not-ready, {-1,-1} ExitPoint, etc.).
+	if haveTarget {
+		exitScent := ctx.ExitScentMap()
+		chaseScent := ctx.ScentMaps[model.ScentMapChase]
+		p2e, p2p, adv := computeInterceptStats(exitScent, chaseScent, actor.Pos, player.Pos)
+		s[12] = p2e
+		s[13] = p2p
+		s[14] = adv
+		tile, ok := m.GetTileType(player.Pos)
+		if ok && tile == model.Corridor {
+			s[15] = 1
 		}
 	}
 

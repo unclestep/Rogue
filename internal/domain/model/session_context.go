@@ -10,6 +10,13 @@ type SessionContext struct {
 	Playthrough *Playthrough
 	ScentMaps   map[ScentType]*ScentMap // Pre-calculate (update every turn)
 	rng         *rand.Rand
+
+	// exitScentCache is lazily filled by ExitScentMap() on first use.
+	// It is intentionally NOT computed inside BuildScentMaps() because the map's
+	// ExitPoint is not valid until the dungeon generator has finished populating
+	// the map; many test helpers construct SessionContext before the map is
+	// fully populated, so eager computation would panic on {-1,-1}.
+	exitScentCache *ScentMap
 }
 
 func NewSessionContext(p *Playthrough) *SessionContext {
@@ -63,6 +70,32 @@ func (ctx *SessionContext) buildChaseMap() {
 
 func (ctx *SessionContext) Rng() *rand.Rand {
 	return ctx.rng
+}
+
+// ExitScentMap lazily builds (and caches) a BFS distance grid from the map's
+// ExitPoint over walkable cells. Returns nil when the map or ExitPoint is not
+// ready — callers must handle nil (treat as "no exit info"). See the cache
+// field docstring for why this is not eager.
+func (ctx *SessionContext) ExitScentMap() *ScentMap {
+	if ctx.exitScentCache != nil {
+		return ctx.exitScentCache
+	}
+	if ctx.Playthrough == nil || ctx.Playthrough.Map == nil {
+		return nil
+	}
+	exit := ctx.Playthrough.Map.ExitPoint
+	if exit == NewInvalidPoint() {
+		return nil
+	}
+	if exit.X < 0 || exit.Y < 0 ||
+		exit.X >= ctx.Playthrough.Map.Width ||
+		exit.Y >= ctx.Playthrough.Map.Height {
+		return nil
+	}
+	ctx.exitScentCache = &ScentMap{
+		Scent: ctx.Playthrough.Map.GenerateScentMap([]geometry.Point{exit}),
+	}
+	return ctx.exitScentCache
 }
 
 type ScentType int
