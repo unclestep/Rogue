@@ -41,12 +41,22 @@ build
 /package-lock.json
 /package.json
 
-# RL training artifacts (generated, not versioned)
+# RL training artifacts (generated, not versioned). The training fixture pool
+# is regenerated via `go run ./cmd/dump-topology -n 2000 -out rl/fixtures/topologies`;
+# see rl/README.md. Parity fixtures under rl/fixtures/parity/ ARE committed —
+# those are small, pinned, and needed for Go<->Python byte-exact tests.
 /rl/topologies/*.json
+/rl/fixtures/topologies/*.json
+/rl/fixtures/topologies_small/*.json
+/rl/fixtures/topologies_medium/*.json
+!/rl/fixtures/parity/
+!/rl/fixtures/parity/**
 /rl/runs/
 /rl/checkpoints/
+/rl/models/
 __pycache__/
 .ipynb_checkpoints/
 
 checkpoints
 __pycache__
+.pytest_cache

@@ -11,15 +11,16 @@ func GameRulesToDTO(r *model.GameRules) *dto.GameRulesDTO {
 	}
 
 	d := &dto.GameRulesDTO{
-		Id:                     int64(r.Id),
-		MaxDungeonCount:        r.MaxDungeonCount,
-		DungeonWidth:           r.DungeonWidth,
-		DungeonHeight:          r.DungeonHeight,
-		MaxHorizontalRoomCount: r.MaxHorizontalRoomCount,
-		MaxVerticalRoomCount:   r.MaxVerticalRoomCount,
-		HpRestore:              r.HpRestore,
-		TimeForMove:            r.TimeForMove,
-		DiffCurve:              difficultyCurveToDTO(r.DiffCurve),
+		Id:                      int64(r.Id),
+		MaxDungeonCount:         r.MaxDungeonCount,
+		DungeonWidth:            r.DungeonWidth,
+		DungeonHeight:           r.DungeonHeight,
+		MaxHorizontalRoomCount:  r.MaxHorizontalRoomCount,
+		MaxVerticalRoomCount:    r.MaxVerticalRoomCount,
+		ExtraDungeonConnections: r.ExtraDungeonConnections,
+		HpRestore:               r.HpRestore,
+		TimeForMove:             r.TimeForMove,
+		DiffCurve:               difficultyCurveToDTO(r.DiffCurve),
 	}
 
 	if r.ActorsConf != nil {
@@ -45,15 +46,16 @@ func GameRulesFromDTO(d *dto.GameRulesDTO) *model.GameRules {
 	}
 
 	r := &model.GameRules{
-		Id:                     model.RulesId(d.Id),
-		MaxDungeonCount:        d.MaxDungeonCount,
-		DungeonWidth:           d.DungeonWidth,
-		DungeonHeight:          d.DungeonHeight,
-		MaxHorizontalRoomCount: d.MaxHorizontalRoomCount,
-		MaxVerticalRoomCount:   d.MaxVerticalRoomCount,
-		HpRestore:              d.HpRestore,
-		TimeForMove:            d.TimeForMove,
-		DiffCurve:              difficultyCurveFromDTO(d.DiffCurve),
+		Id:                      model.RulesId(d.Id),
+		MaxDungeonCount:         d.MaxDungeonCount,
+		DungeonWidth:            d.DungeonWidth,
+		DungeonHeight:           d.DungeonHeight,
+		MaxHorizontalRoomCount:  d.MaxHorizontalRoomCount,
+		MaxVerticalRoomCount:    d.MaxVerticalRoomCount,
+		ExtraDungeonConnections: d.ExtraDungeonConnections,
+		HpRestore:               d.HpRestore,
+		TimeForMove:             d.TimeForMove,
+		DiffCurve:               difficultyCurveFromDTO(d.DiffCurve),
 	}
 
 	if d.ActorsConf != nil {

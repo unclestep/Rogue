@@ -163,17 +163,18 @@ type DifficultyCurveDTO struct {
 }
 
 type GameRulesDTO struct {
-	Id                     int64
-	MaxDungeonCount        int                  `json:"max_dungeon_count"` // Number of dungeons to complete the game
-	DungeonWidth           int                  `json:"dungeon_width"`
-	DungeonHeight          int                  `json:"dungeon_height"`
-	MaxHorizontalRoomCount int                  `json:"max_horizontal_room_count"` // Max number of rooms in horizontal
-	MaxVerticalRoomCount   int                  `json:"max_vertical_room_count"`   // Max number of rooms in vertical
-	ActorsConf             map[string]*ActorDTO `json:"actors_conf"`               // Actors configuration
-	ItemsConf              map[string]*ItemDTO  `json:"items_conf"`                // Items configuration
-	DiffCurve              *DifficultyCurveDTO  `json:"diff_curve"`
-	HpRestore              float64              `json:"hp_restore"`    // Percent of max health that will restore player's HP
-	TimeForMove            int                  `json:"time_for_move"` // Time for move in seconds
+	Id                      int64
+	MaxDungeonCount         int                  `json:"max_dungeon_count"` // Number of dungeons to complete the game
+	DungeonWidth            int                  `json:"dungeon_width"`
+	DungeonHeight           int                  `json:"dungeon_height"`
+	MaxHorizontalRoomCount  int                  `json:"max_horizontal_room_count"`   // Max number of rooms in horizontal
+	MaxVerticalRoomCount    int                  `json:"max_vertical_room_count"`     // Max number of rooms in vertical
+	ExtraDungeonConnections int                  `json:"extra_dungeon_connections"`   // Additional random inter-room corridors
+	ActorsConf              map[string]*ActorDTO `json:"actors_conf"`                 // Actors configuration
+	ItemsConf               map[string]*ItemDTO  `json:"items_conf"`                  // Items configuration
+	DiffCurve               *DifficultyCurveDTO  `json:"diff_curve"`
+	HpRestore               float64              `json:"hp_restore"`    // Percent of max health that will restore player's HP
+	TimeForMove             int                  `json:"time_for_move"` // Time for move in seconds
 }
 
 // DungParamsDTO encapsulates all variables used by the generator for a specific level.

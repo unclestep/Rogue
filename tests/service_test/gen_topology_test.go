@@ -22,7 +22,7 @@ func TestGenerateTopologyGridSizes(t *testing.T) {
 
 	t.Run("NormalGrid", func(t *testing.T) {
 		ctx.Playthrough.Map = nil
-		tg.Gen(ctx, 80, 24, 3, 3)
+		tg.Gen(ctx, 80, 24, 3, 3, 0)
 		if ctx.Playthrough.Map == nil {
 			t.Error("Expected map to be generated (not nil)")
 		}
@@ -30,7 +30,7 @@ func TestGenerateTopologyGridSizes(t *testing.T) {
 
 	t.Run("TooSmallGrid", func(t *testing.T) {
 		ctx.Playthrough.Map = nil
-		tg.Gen(ctx, 10, 10, 3, 3)
+		tg.Gen(ctx, 10, 10, 3, 3, 0)
 		if ctx.Playthrough.Map != nil {
 			t.Error("Expected map to fail generation (nil) for too small grid")
 		}
@@ -38,7 +38,7 @@ func TestGenerateTopologyGridSizes(t *testing.T) {
 
 	t.Run("ZeroGrid", func(t *testing.T) {
 		ctx.Playthrough.Map = nil
-		tg.Gen(ctx, 10, 10, 0, 0)
+		tg.Gen(ctx, 10, 10, 0, 0, 0)
 		if ctx.Playthrough.Map != nil {
 			t.Error("Expected map to fail generation (nil) for 0 rooms")
 		}
@@ -46,7 +46,7 @@ func TestGenerateTopologyGridSizes(t *testing.T) {
 
 	t.Run("NegativeGrid", func(t *testing.T) {
 		ctx.Playthrough.Map = nil
-		tg.Gen(ctx, 10, 10, -1, -1)
+		tg.Gen(ctx, 10, 10, -1, -1, 0)
 		if ctx.Playthrough.Map != nil {
 			t.Error("Expected map to fail generation (nil) for negative rooms")
 		}
@@ -60,7 +60,7 @@ func TestGenerateTopologyConnectivity(t *testing.T) {
 		seed := time.Now().UnixNano() + int64(i)
 		ctx := createTestContext(seed)
 
-		tg.Gen(ctx, 80, 24, 3, 3)
+		tg.Gen(ctx, 80, 24, 3, 3, 0)
 		m := ctx.Playthrough.Map
 
 		if ctx.Playthrough.Map == nil {
@@ -117,11 +117,11 @@ func TestGenerateTopologyDeterminism(t *testing.T) {
 	var testSeed int64 = 42
 
 	ctxA := createTestContext(testSeed)
-	tg.Gen(ctxA, 80, 24, 3, 3)
+	tg.Gen(ctxA, 80, 24, 3, 3, 0)
 	strA := ctxA.Playthrough.Map.String()
 
 	ctxB := createTestContext(testSeed)
-	tg.Gen(ctxB, 80, 24, 3, 3)
+	tg.Gen(ctxB, 80, 24, 3, 3, 0)
 	strB := ctxB.Playthrough.Map.String()
 
 	if strA != strB {
@@ -136,7 +136,7 @@ func TestGenerateTopologyDeterminism(t *testing.T) {
 
 	testSeed += 1
 	ctxC := createTestContext(testSeed)
-	tg.Gen(ctxC, 80, 24, 3, 3)
+	tg.Gen(ctxC, 80, 24, 3, 3, 0)
 
 	if ctxA.Playthrough.Map.String() == ctxC.Playthrough.Map.String() {
 		t.Error("Maps with different seeds are identical")

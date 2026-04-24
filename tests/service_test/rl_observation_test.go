@@ -316,16 +316,16 @@ func TestBuildObservationMemoryDecaysAtHalfHorizon(t *testing.T) {
 	}
 }
 
-// ObservationSize must equal 11*121 + 16 = 1347 — guards against drift.
+// ObservationSize must equal 14*121 + 20 = 1714 — guards against drift.
 func TestObservationSizeConstant(t *testing.T) {
-	if service.ObservationSize != 1347 {
-		t.Fatalf("ObservationSize=%d want 1347", service.ObservationSize)
+	if service.ObservationSize != 1714 {
+		t.Fatalf("ObservationSize=%d want 1714", service.ObservationSize)
 	}
-	if service.ObservationChannels != 11 {
-		t.Fatalf("ObservationChannels=%d want 11", service.ObservationChannels)
+	if service.ObservationChannels != 14 {
+		t.Fatalf("ObservationChannels=%d want 14", service.ObservationChannels)
 	}
-	if service.ObservationScalars != 16 {
-		t.Fatalf("ObservationScalars=%d want 16", service.ObservationScalars)
+	if service.ObservationScalars != 20 {
+		t.Fatalf("ObservationScalars=%d want 20", service.ObservationScalars)
 	}
 }
 
@@ -437,5 +437,104 @@ func TestBuildObservationInterceptBoundedWhenExitValid(t *testing.T) {
 	}
 	if adv < -1 || adv > 1 {
 		t.Errorf("intercept_advantage out of [-1,1]: %v", adv)
+	}
+}
+
+// Map_Position scalars (s[16], s[17]) encode global pursuer coordinates.
+// Critical on 80×24 — the 11×11 crop hides where we are on the full map.
+func TestBuildObservationMapPositionScalars(t *testing.T) {
+	ctx, pursuer := pursuerAt(geometry.Point{X: 7, Y: 4})
+	obs := service.BuildObservation(ctx, pursuer, freshMemory())
+	scalarBase := service.ObservationGridFloats
+	// Map width=15, height=9 → s[16]=7/15≈0.467, s[17]=4/9≈0.444.
+	want16 := float32(7.0 / 15.0)
+	want17 := float32(4.0 / 9.0)
+	if diff := obs[scalarBase+16] - want16; diff > 1e-4 || diff < -1e-4 {
+		t.Errorf("s[16] Map_Position_X: want %v, got %v", want16, obs[scalarBase+16])
+	}
+	if diff := obs[scalarBase+17] - want17; diff > 1e-4 || diff < -1e-4 {
+		t.Errorf("s[17] Map_Position_Y: want %v, got %v", want17, obs[scalarBase+17])
+	}
+}
+
+// Polar distance / angle scalars (s[18], s[19]) are bounded in [0,1] / [-1,1].
+// Zero when no target — not covered here; that's the default.
+func TestBuildObservationPolarScalarsBounded(t *testing.T) {
+	play := model.NewPlaythrough("", 0, 0)
+	play.Map = buildPursuerObsMap()
+	play.Map.ExitPoint = geometry.Point{X: 1, Y: 1}
+	player := model.NewDefaultPlayer(1, geometry.Point{X: 10, Y: 6}, 9)
+	play.Players[player.Id] = player
+	play.Map.SetActor(player.Pos, int64(player.Id))
+	pursuer := model.NewDefaultPursuer(2, geometry.Point{X: 5, Y: 4})
+	play.Monsters[pursuer.Id] = pursuer
+	play.Map.SetActor(pursuer.Pos, int64(pursuer.Id))
+
+	ctx := model.NewSessionContext(play)
+	obs := service.BuildObservation(ctx, pursuer, freshMemory())
+	scalarBase := service.ObservationGridFloats
+	d := obs[scalarBase+18]
+	a := obs[scalarBase+19]
+	if d < 0 || d > 1 {
+		t.Errorf("polar distance out of [0,1]: %v", d)
+	}
+	if a < -1 || a > 1 {
+		t.Errorf("polar angle out of [-1,1]: %v", a)
+	}
+}
+
+// ChInterceptPath channel stays at 0 when there's no target — matches Python's
+// intercept_map=None default, important for parity on no-player scenarios.
+func TestBuildObservationInterceptChannelEmptyWithoutTarget(t *testing.T) {
+	// Build ctx with NO players (pursuerAt always adds a player — so we do this manually).
+	play := model.NewPlaythrough("", 0, 0)
+	play.Map = buildPursuerObsMap()
+	pursuer := model.NewDefaultPursuer(2, geometry.Point{X: 7, Y: 4})
+	play.Monsters[pursuer.Id] = pursuer
+	play.Map.SetActor(pursuer.Pos, int64(pursuer.Id))
+
+	ctx := model.NewSessionContext(play)
+	obs := service.BuildObservation(ctx, pursuer, freshMemory())
+	for y := range service.ObservationCropSize {
+		for x := range service.ObservationCropSize {
+			v := service.ObservationCell(obs, service.ChInterceptPath, x, y)
+			if v != 0 {
+				t.Errorf("ChInterceptPath[%d,%d] expected 0 (no target), got %v", x, y, v)
+			}
+		}
+	}
+}
+
+// ChFuturePlayerPos peaks at relative player position (dx=0, dy=0 in crop is
+// the pursuer itself; player is at some offset). With no valid exit scent the
+// channel stays 0.
+func TestBuildObservationFuturePlayerPosDecaysAlongPath(t *testing.T) {
+	// Build ctx with valid ExitPoint so predictPlayerPath has a gradient.
+	play := model.NewPlaythrough("", 0, 0)
+	play.Map = buildPursuerObsMap()
+	play.Map.ExitPoint = geometry.Point{X: 1, Y: 1}
+	player := model.NewDefaultPlayer(1, geometry.Point{X: 10, Y: 4}, 9)
+	play.Players[player.Id] = player
+	play.Map.SetActor(player.Pos, int64(player.Id))
+	pursuer := model.NewDefaultPursuer(2, geometry.Point{X: 7, Y: 4})
+	play.Monsters[pursuer.Id] = pursuer
+	play.Map.SetActor(pursuer.Pos, int64(pursuer.Id))
+
+	ctx := model.NewSessionContext(play)
+	obs := service.BuildObservation(ctx, pursuer, freshMemory())
+
+	// Player at (10, 4); pursuer at (7, 4). Relative crop = (dx=3, dy=0).
+	// crop coord = (dx+5, dy+5) = (8, 5). Intensity at step 0 = 1.0.
+	peak := service.ObservationCell(obs, service.ChFuturePlayerPos, 8, 5)
+	if peak < 0.99 {
+		t.Errorf("ChFuturePlayerPos at player cell expected ≈1.0, got %v", peak)
+	}
+}
+
+// FlashlightRange must be the short-cone value (3.0), matching Python
+// pursuer_env.py. Change here is a gameplay change; keep pinned.
+func TestFlashlightRangeShortCone(t *testing.T) {
+	if service.FlashlightRange != 3.0 {
+		t.Fatalf("FlashlightRange=%v want 3.0 (short-cone)", service.FlashlightRange)
 	}
 }
