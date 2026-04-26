@@ -14,9 +14,9 @@ Produces `rl/models/pursuer.onnx`, loaded by Go via `ROGUE_PURSUER_MODEL_PATH`.
 | `pursuer_training.ipynb` | Main notebook: architecture, training, eval, ONNX export |
 | `tools/gen_tiny_onnx.py` | Generates minimal ONNX fixture for Go smoke tests |
 | `fixtures/parity/*.json` | Committed hand-crafted scenarios for Go↔Python byte-exact tests |
-| `fixtures/topologies/` | 2000 full maps (4×4 rooms, 80×24) — gitignored, regen needed |
-| `fixtures/topologies_small/` | 500 maps (2×2 rooms) — curriculum warmup |
-| `fixtures/topologies_medium/` | 500 maps (3×3 rooms) — curriculum bridge |
+| `fixtures/topologies/` | 2000 full maps (4×4 rooms, 80×24) — committed, regen if BSP changes |
+| `fixtures/topologies_small/` | 500 maps (2×2 rooms) — committed, curriculum warmup |
+| `fixtures/topologies_medium/` | 500 maps (3×3 rooms) — committed, curriculum bridge |
 | `models/pursuer.onnx` | Trained policy (gitignored; `.data` tracked) |
 | `checkpoints/` | SB3 eval checkpoints + `evaluations.npz` |
 | `runs/QRDQN_*/` | TensorBoard event files — 3 training runs |
@@ -139,8 +139,9 @@ Map dimensions (all three pools share 80×24):
 - `topologies_medium`: 9 rooms (3×3 grid)
 - `topologies_full`:  16 rooms (4×4 grid)
 
-All three pools are gitignored (only parity fixtures under `fixtures/parity/`
-are committed). Regenerate before training on a fresh checkout.
+All three pools are committed (3000 maps total). Regenerate only if the Go BSP
+generator changes; parity fixtures live separately under `fixtures/parity/` with
+their own pinned topology under `fixtures/parity/topologies/`.
 
 ### CLI flags for `dump-topology`
 

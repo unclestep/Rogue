@@ -15,7 +15,7 @@ internal/
   infrastructure/ — storage adapters (JSON files, in-memory)
   dto/          — cross-layer data transfer objects
 pkg/            — reusable, project-agnostic libraries
-rl/             — Python PPO training pipeline
+rl/             — Python QR-DQN training pipeline
 tests/          — black-box tests organised by layer
 ```
 

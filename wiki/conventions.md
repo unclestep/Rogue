@@ -111,7 +111,10 @@ from those constants. After any change:
 |--------|---------|-------|
 | `make run` | `go run ./cmd` | Start game (FallbackPolicy) |
 | `make test` | `go test ./...` | Go tests |
-| `make dump-topologies` | `go run ./cmd/dump-topology -n 1000 -out rl/topologies` | Generate RL training maps |
+| `make dump-topologies` | regenerates all three pools (small/medium/full) under `rl/fixtures/topologies*` | Run only if BSP generator changes |
+| `make dump-topologies-full` | full pool: 2000 maps, 4×4 rooms, seed 42 | Output `rl/fixtures/topologies` |
+| `make dump-topologies-medium` | medium pool: 500 maps, 3×3 rooms, seed 100 | Output `rl/fixtures/topologies_medium` |
+| `make dump-topologies-small` | small pool: 500 maps, 2×2 rooms, seed 200 | Output `rl/fixtures/topologies_small` |
 | `make run-notebook` | `jupyter lab rl/pursuer_training.ipynb` | Open training notebook |
 | `make test-rl` | `python -m pytest rl/tests -q` | Python parity + env tests |
 | `make build` | cross-compile for 8 platforms | Output in `build/` |

@@ -165,7 +165,7 @@ Go implementation of Rogue (roguelike). Module: `github.com/unclestep/Rogue`.
 |------|---------|
 | `pursuer_env.py` | Gymnasium env mirroring Go's `BuildObservation` 1:1 |
 | `scripted_player.py` | Random wander + flee opponent for training |
-| `pursuer_training.ipynb` | Main PPO training notebook (Colab or local Jupyter) |
+| `pursuer_training.ipynb` | Main QR-DQN training notebook (Colab or local Jupyter) |
 | `tools/gen_tiny_onnx.py` | Generates minimal ONNX fixture for Go tests |
 | `tests/` | Parity tests (Go↔Python), env tests (attack, spawn, observation, reward) |
 | `models/pursuer.onnx` | Trained policy weights (gitignored, except `.data` file) |
