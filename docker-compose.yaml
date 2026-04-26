@@ -1,0 +1,12 @@
+services:
+  dev:
+    build: .
+    stdin_open: true
+    tty: true
+    container_name: rogue
+    ports:
+      - "7777:7777"
+    volumes:
+      - .:/app
+      - ~/.claude:/root/.claude
+    restart: unless-stopped

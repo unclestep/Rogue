@@ -1,6 +1,13 @@
-# Gouge — Index
+# Gouge - Index
 
 Go implementation of Rogue (roguelike). Module: `github.com/unclestep/Rogue`.
+
+Wiki entry points:
+- [[hot]] - latest decisions, current status, what is still open.
+- [[architecture]] - layered overview, game loop, RL subsystem.
+- [[conventions]] - code style, file naming, parity rules, env vars.
+- [[rl]] - RL training pipeline (env, reward, curriculum, CNN, training runs).
+- [[bugs]] - open bugs and resolved issues across the codebase.
 
 ---
 
@@ -11,6 +18,18 @@ Go implementation of Rogue (roguelike). Module: `github.com/unclestep/Rogue`.
 | Main game | `cmd/main.go` | Starts TUI + Server, loads ONNX policy if env set |
 | Topology dumper | `cmd/dump-topology/main.go` | Dumps N BSP maps to JSON for RL training |
 | Observation dumper | `cmd/dump-observation/main.go` | Dumps pursuer observation tensors for parity tests |
+
+---
+
+## Top-level dev infra
+
+| File | Purpose |
+|------|---------|
+| `Dockerfile` | Dev container - Python 3.14, Go 1.26.2, Node.js 22, ORT 1.23.0, Claude Code CLI. See [[architecture]] "Dev container". |
+| `docker-compose.yaml` | `dev` service - mounts `/app` and `~/.claude`, exposes 7777, persistent stdin/tty |
+| `rl/requirements.txt` | Python deps (gymnasium, SB3 + sb3-contrib, torch CPU, onnx/ort, tensorboard, jupyter, etc.) |
+| `Makefile` | Build/test/lint/dump-topologies/run-notebook/test-rl targets - see [[conventions]] |
+| `.github/workflows/go.yaml` | CI - lint job (`go vet` + `gofumpt -l`) then test job (Go 1.26.1 + ORT 1.23.0). NOTE: Go version differs from `go.mod`'s 1.25.5 - see [[bugs]] B10 |
 
 ---
 

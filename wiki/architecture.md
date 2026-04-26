@@ -239,6 +239,52 @@ its private `<-chan GameView`. All communication is channel-based — no network
 
 ## CI
 
-GitHub Actions (`go.yaml`) runs on pushes to `main` / `develop`:
-1. `lint` — `go vet` + `gofumpt` formatting check.
-2. `test` — installs ORT 1.23.0, runs `go test ./...` with `ROGUE_ONNX_LIB_PATH` set.
+GitHub Actions (`.github/workflows/go.yaml`) runs on pushes / PRs to
+`main` / `develop`:
+
+1. **lint** (Go 1.26.1):
+   - `go vet ./...`
+   - `gofumpt -l .` - fails the job if any file is unformatted.
+2. **test** (Go 1.26.1, depends on `lint`):
+   - `go build -o ./bin/gouge ./cmd/main.go`
+   - downloads ONNX Runtime 1.23.0, exports `ROGUE_ONNX_LIB_PATH`.
+   - `go test -v ./...`.
+
+Python tests (`make test-rl`) and notebook execution are **not** part of CI -
+they run locally / in the dev container.
+
+Note: `go.mod` declares `go 1.25.5` while CI installs 1.26.1 and the
+Dockerfile installs 1.26.2 - see [[bugs]] B10 for the version-skew issue.
+
+---
+
+## Dev container
+
+`/app/Dockerfile` and `/app/docker-compose.yaml` define a single dev image
+that has every tool needed to develop, train, and ship:
+
+| Component | Version |
+|-----------|---------|
+| Base image | `python:3.14-slim` |
+| Go | `1.26.2` |
+| Node.js | 22 LTS (NodeSource APT repo) |
+| ONNX Runtime | 1.23.0 (under `/opt/onnxruntime`) |
+| Python deps | from `rl/requirements.txt` (gymnasium, SB3, sb3-contrib, torch CPU, onnx, ort, tensorboard, jupyter) |
+| Tooling | `@anthropic-ai/claude-code` installed globally via npm |
+| User | non-root `user`, `HOME=/home/user` |
+
+`docker-compose.yaml` defines a single `dev` service that:
+- Mounts the project as `/app` and `~/.claude` as `/root/.claude`.
+- Exposes port `7777` (game server).
+- Keeps stdin/tty open with `restart: unless-stopped`.
+
+Usage:
+
+```bash
+docker compose up -d
+docker compose exec dev bash
+# inside: go test ./..., make test-rl, jupyter lab rl/pursuer_training.ipynb, etc.
+```
+
+The legacy `.devcontainer/` folder has been removed - the top-level
+Dockerfile is the canonical dev environment.

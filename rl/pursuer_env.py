@@ -216,15 +216,9 @@ def flashlight_mask(
     dir_x = math.cos(angle_rad)
     dir_y = math.sin(angle_rad)
 
-    # Go's math.Tan(pi/4) rounds to 1.0 exactly; Python's libm math.tan
-    # returns 0.9999999999999999 (one ULP below). That 1-ULP gap inverts the
-    # DDA tie-break on perfectly-diagonal cone edges — four boundary cells
-    # flip between the two implementations. Special-case the 45° production
-    # value to keep observation parity bit-exact.
-    if half_fov_deg == 45.0:
-        plane_scale = 1.0
-    else:
-        plane_scale = math.tan(math.radians(half_fov_deg))
+    # plane_scale is computed by the same math.tan in Go, so DDA tie-breaks
+    # at the cone boundary stay byte-identical between the two languages.
+    plane_scale = math.tan(math.radians(half_fov_deg))
     plane_x = -math.sin(angle_rad) * plane_scale
     plane_y = math.cos(angle_rad) * plane_scale
 
@@ -928,8 +922,14 @@ class PursuerEnv(gym.Env):
         self._randomize_player_profile = bool(randomize_player_profile)
 
         self.action_space = spaces.Discrete(ACTION_COUNT)
+        # Grid channels are in [0, 1], scalars in [-1, 1].
+        obs_low = np.concatenate([
+            np.zeros(OBSERVATION_GRID_FLOATS, dtype=np.float32),
+            np.full(OBSERVATION_SCALARS, -1.0, dtype=np.float32),
+        ])
+        obs_high = np.ones(OBSERVATION_SIZE, dtype=np.float32)
         self.observation_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(OBSERVATION_SIZE,), dtype=np.float32
+            low=obs_low, high=obs_high, shape=(OBSERVATION_SIZE,), dtype=np.float32
         )
 
         self._rng = random.Random(seed)
@@ -952,7 +952,12 @@ class PursuerEnv(gym.Env):
         self._cone_mask_cache: Optional[np.ndarray] = None
         self._exit_scent_cache: Optional[np.ndarray] = None
         self._chase_scent_cache: Optional[np.ndarray] = None
+        self._chase_scent_key: Optional[tuple[int, int]] = None
         self._covert_map_cache: Optional[np.ndarray] = None
+        self._intercept_map_cache: Optional[np.ndarray] = None
+        self._intercept_map_key: Optional[tuple[int, int]] = None
+        self._future_path_cache: Optional[list[tuple[int, int]]] = None
+        self._future_path_key: Optional[tuple[int, int]] = None
         self._exit_camp_counter = 0
 
         self._fixed_profile = fixed_profile
@@ -985,7 +990,12 @@ class PursuerEnv(gym.Env):
         self._was_visible_before_step = False
         self._exit_scent_cache = chase_scent_map(self.topology, self.topology.exit_point)
         self._chase_scent_cache = chase_scent_map(self.topology, self.player_pos)
+        self._chase_scent_key = self.player_pos
         self._covert_map_cache = None
+        self._intercept_map_cache = None
+        self._intercept_map_key = None
+        self._future_path_cache = None
+        self._future_path_key = None
 
         # --- Domain randomization per episode ----------------------------
         if self._max_steps_range is not None:
@@ -1021,6 +1031,7 @@ class PursuerEnv(gym.Env):
         distractor_prob: Optional[float] = None,
         randomize_player_profile: Optional[bool] = None,
         topologies_dir: Optional[str] = None,
+        spawn_radius: Optional[tuple[int, int]] = None,
     ) -> dict[str, object]:
         """Mutate curriculum knobs mid-training. Called from CurriculumCallback
         via `vec_env.env_method('set_difficulty', ...)` once the agent reaches
@@ -1034,11 +1045,14 @@ class PursuerEnv(gym.Env):
             self._randomize_player_profile = bool(randomize_player_profile)
         if topologies_dir is not None:
             self.set_topologies_dir(topologies_dir)
+        if spawn_radius is not None:
+            self._spawn_radius = spawn_radius
         return {
             "fixed_profile": self._fixed_profile,
             "distractor_prob": self._distractor_prob,
             "randomize_player_profile": self._randomize_player_profile,
             "topologies_dir": self._topologies_dir,
+            "spawn_radius": self._spawn_radius,
         }
 
     def set_topologies_dir(self, path: str) -> None:
@@ -1111,8 +1125,10 @@ class PursuerEnv(gym.Env):
         ):
             self.pursuer_hp -= self._attack_damage
 
-        # Recompute chase scent after player moved.
-        self._chase_scent_cache = chase_scent_map(self.topology, self.player_pos)
+        # Recompute chase scent only when the player actually moved.
+        if self._chase_scent_key != self.player_pos:
+            self._chase_scent_cache = chase_scent_map(self.topology, self.player_pos)
+            self._chase_scent_key = self.player_pos
 
         # Distractor wanders randomly; it never attacks, but its presence
         # adds noise to the `other_monster` channel.
@@ -1262,9 +1278,12 @@ class PursuerEnv(gym.Env):
 
     def _intercept_stats(self) -> tuple[float, float, float]:
         assert self.topology is not None
+        if self._chase_scent_cache is None or self._chase_scent_key != self.player_pos:
+            self._chase_scent_cache = chase_scent_map(self.topology, self.player_pos)
+            self._chase_scent_key = self.player_pos
         return compute_intercept_stats(
             self.exit_scent_map(),
-            chase_scent_map(self.topology, self.player_pos),
+            self._chase_scent_cache,
             self.pursuer_pos,
             self.player_pos,
         )
@@ -1281,20 +1300,25 @@ class PursuerEnv(gym.Env):
         tile = int(self.topology.tiles[self.player_pos[1], self.player_pos[0]])
         is_corridor = 1.0 if tile == TILE_CORRIDOR else 0.0
         exit_scent = self.exit_scent_map()
-        chase = (
-            self._chase_scent_cache
-            if self._chase_scent_cache is not None
-            else chase_scent_map(self.topology, self.player_pos)
-        )
-        intercept = intercept_path_map(
-            self.topology, exit_scent, chase, self.player_pos
-        )
+        if self._chase_scent_cache is None or self._chase_scent_key != self.player_pos:
+            self._chase_scent_cache = chase_scent_map(self.topology, self.player_pos)
+            self._chase_scent_key = self.player_pos
+        chase = self._chase_scent_cache
+        if self._intercept_map_key != self.player_pos:
+            self._intercept_map_cache = intercept_path_map(
+                self.topology, exit_scent, chase, self.player_pos
+            )
+            self._intercept_map_key = self.player_pos
+        intercept = self._intercept_map_cache
         visited = visited_corridor_path_map(
             self.topology, self.pursuer_pos, self.player_trail
         )
-        future_path = predict_player_path(
-            self.topology, self.player_pos, exit_scent
-        )
+        if self._future_path_key != self.player_pos:
+            self._future_path_cache = predict_player_path(
+                self.topology, self.player_pos, exit_scent
+            )
+            self._future_path_key = self.player_pos
+        future_path = self._future_path_cache
         return build_observation(
             topology=self.topology,
             pursuer_pos=self.pursuer_pos,
@@ -1331,7 +1355,7 @@ class PursuerEnv(gym.Env):
           -2.0   pursuer dies
 
         Ambush effect (fires every time pursuer enters player cone from outside):
-          +1.5   if dist ≤ 2  (sudden close-range appearance)
+          +3.0   if dist ≤ 2  (sudden close-range appearance)
           -1.0   if dist ≥ 5  (premature far-range detection)
 
         Dense shaping:
@@ -1368,8 +1392,11 @@ class PursuerEnv(gym.Env):
                 abs(self.player_pos[0] - self.pursuer_pos[0]),
                 abs(self.player_pos[1] - self.pursuer_pos[1]),
             )
+            # Ambush bonus dominates the cumulative approach-shaping signal
+            # (50 steps * 0.02 ~= 1.0). Cone-pop manoeuvre needs a stronger
+            # gradient than the approach gradient.
             if dist <= 2:
-                r += 1.5
+                r += 3.0
             elif dist >= 5:
                 r -= 1.0
 

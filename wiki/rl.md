@@ -78,7 +78,7 @@ Terminal:
   -2.0    pursuer dies
 
 Ambush effect (fires when pursuer enters cone from outside):
-  +1.5    if Chebyshev dist to player <= 2  (sudden close-range)
+  +3.0    if Chebyshev dist to player <= 2  (sudden close-range, was +1.5)
   -1.0    if Chebyshev dist >= 5            (premature far detection)
 
 Dense shaping:
@@ -200,46 +200,119 @@ before the pooling.
 
 ---
 
-## Training configuration (last run — QRDQN_3)
+## Training configuration (last run - QRDQN_3)
+
+Full `CONFIG` dict (top of `pursuer_training.ipynb`):
 
 ```python
 CONFIG = {
+    # Topology pools (4 pools - the active one for stage 0 is topologies_dir)
+    'topologies_small':      'fixtures/topologies_small',   # 2x2 rooms
+    'topologies_medium':     'fixtures/topologies_medium',  # 3x3
+    'topologies_full':       'fixtures/topologies',         # 4x4 - production
+    'topologies_dir':        'fixtures/topologies_small',   # initial pool
+
+    # Episode
     'total_timesteps':       3_000_000,
-    'n_envs':                8,           # SubprocVecEnv
+    'n_envs':                8,                  # SubprocVecEnv
     'max_episode_steps':     50,
-    'max_episode_steps_range': (40, 70),  # domain randomisation
+    'max_episode_steps_range': (40, 70),         # domain randomisation
+    'seed':                  42,
+
+    # Output paths
+    'model_out':             'models/pursuer.onnx',
+    'checkpoint_dir':        'checkpoints',
+    'tensorboard_log':       'runs',
+
+    # Net + algorithm
     'features_dim':          256,
     'n_quantiles':           51,
     'buffer_size':           300_000,
     'learning_starts':       50_000,
     'batch_size':            512,
     'gamma':                 0.99,
-    'lr_initial':            1e-4,        # cosine decay → 1e-5
+    'lr_initial':            1e-4,               # cosine decay -> lr_final
     'lr_final':              1e-5,
     'exploration_fraction':  0.50,
     'exploration_final_eps': 0.02,
     'train_freq':            4,
     'target_update_interval': 2_000,
+
+    # Eval
+    'eval_freq':             10_000,
+    'eval_episodes':         20,
+    'metrics_log_freq':      5_000,
+
+    # Curriculum thresholds
+    'curriculum_check_freq':     10_000,
+    'curriculum_stone_rew':      10.0,
+    'curriculum_stone_catch':     0.85,
+    'curriculum_dummy_rew':       8.0,
+    'curriculum_dummy_catch':     0.50,
+    'curriculum_default_rew':     9.0,
+    'curriculum_default_catch':   0.65,
+
+    # Early stopping (currently disabled in callback wiring)
+    'es_patience':  5,
+    'es_min_delta': 0.5,
 }
 ```
 
 **Cosine LR schedule**: half-cosine decay from `lr_initial` to `lr_final`
 over the full 3M-step run. Smoother tail convergence than step decay.
 
+### Notebook cell order (`pursuer_training.ipynb`)
+
+| # | Type | Purpose |
+|---|------|---------|
+| 1 | md | "Pursuer - QR-DQN training pipeline" header |
+| 2 | code | `%pip install` deps |
+| 3 | md | "Hyperparameters" |
+| 4 | code | `CONFIG` dict (above) |
+| 5 | code | `%load_ext tensorboard` + `%tensorboard --logdir runs` (inline UI) |
+| 6 | md | "Environment" |
+| 7 | code | imports + 30-step env sanity rollout |
+| 8 | md | "Architecture" |
+| 9 | code | `PursuerResCNN` definition (CoordConv + ResBlocks + SE + dilated) |
+| 10 | md | "Training" |
+| 11 | code | `cosine_lr_schedule`, `MetricsCallback`, `CurriculumCallback`, `make_env` |
+| 12 | code | training loop - `SubprocVecEnv` + `QRDQN` + `model.learn` |
+| 13 | md | "Learning curves" |
+| 14 | code | matplotlib plots from metrics history (reward, len, catch, epsilon) |
+| 15 | md | "Q-value heatmap" |
+| 16 | code | 3x3 grid of Q-heatmaps via `render_q_heatmap` (uses `buffer_rgba`) |
+| 17 | md | "Evaluation vs baseline" |
+| 18 | code | `BaselinePolicy` (Dijkstra) + rollout vs QR-DQN on `topologies_full` |
+| 19 | code | RNG determinism sanity test (baseline byte-equal across seeds) |
+| 20 | md | "ONNX export + parity check" |
+| 21 | code | `_QRDQNActor` wrapper + `torch.onnx.export(opset_version=18)` |
+| 22 | code | parity loop - 1000 random samples; **assertion fails at 1.14e-4** ([[bugs]] B1) |
+| 23 | code | per-profile rollout (stone / dummy / default / aggressive / cautious / timid) |
+
 ---
 
 ## Curriculum (5 stages)
 
-| Stage | Profile | Topology pool | Promote condition |
-|-------|---------|--------------|-------------------|
-| 0 | stone | topologies_small | reward > 10.0 AND catch > 85% |
-| 1 | stone | topologies_medium | same |
-| 2 | training_dummy | topologies_medium | reward > 8.0 AND catch > 50% |
-| 3 | default | topologies_full | reward > 9.0 AND catch > 65% |
-| 4 | default + distractors | topologies_full | (final, no promotion) |
+| Stage | Profile | Topology pool | Spawn radius | Promote condition |
+|-------|---------|---------------|--------------|-------------------|
+| 0 | stone | topologies_small | (3, 8) | reward > 9.0 AND catch > 70% |
+| 1 | stone | topologies_medium | (3, 8) | same |
+| 2 | training_dummy | topologies_medium | (3, 10) | reward > 8.0 AND catch > 50% |
+| 3 | default | topologies_full | (3, 15) | reward > 9.0 AND catch > 65% |
+| 4 | default + distractors + randomised | topologies_full | (3, 15) | (final, no promotion) |
 
-Curriculum promotes both the training and eval VecEnv simultaneously via
-`set_difficulty()`. Each stage checkpoint is saved as `stage{n}_final.zip`.
+Each stage runs for at least `curriculum_min_steps_per_stage = 300_000`
+steps even if the threshold is met sooner (consolidate the skill), and at
+most `curriculum_max_steps_per_stage = 800_000` steps even if the threshold
+is never met (force-promote to give later stages budget).
+
+Promotion side-effects:
+1. The current model is saved as `stage{n}_final.zip`.
+2. Training and eval VecEnvs are advanced via `env_method('set_difficulty', ...)`.
+3. **Replay buffer flush** (B3 fix): the oldest
+   `curriculum_buffer_flush_frac = 0.7` of the replay buffer is dropped, the
+   most-recent 30% physically rotated to the front. Prevents TD-target
+   divergence from stale (small-map) transitions.
 
 ---
 
@@ -311,7 +384,7 @@ randomized profiles) fired with only 120K steps remaining — essentially
 no time to learn the new task. This caused a visible catch_rate regression
 from 0.851 (step 2.92M) to 0.799 (step 3M).
 
-**Profile evaluation** (notebook output, topologies_small):
+**Profile evaluation** (notebook output, evaluated on `topologies_full`):
 ```
 stone           86.7%   11.95
 training_dummy  86.7%   11.98
@@ -321,12 +394,23 @@ cautious        73.3%    7.37
 timid           70.0%    6.92
 ```
 
-**vs Dijkstra baseline** (topologies_small, 30 episodes):
-```
-QR-DQN:   93.3% catch,  12.65 return, 49.1% ambush
-Dijkstra: 93.3% catch,  12.77 return, 52.6% ambush
-```
-The trained model is **equal to the Dijkstra baseline** on catch rate.
+**vs Dijkstra baseline** (`topologies_full`, 30 episodes, current eval cell):
+
+| policy | return | catch | in_cone | len | 1st_hit | hits | ambush |
+|--------|--------|-------|---------|-----|---------|------|--------|
+| QR-DQN | 8.95 +/- 10.59 | 76.7% | 0.173 | 20.0 | 11.7 | 47 | 63.8% |
+| Baseline (Dijkstra) | 11.34 +/- 8.31 | **86.7%** | 0.196 | 18.7 | 13.3 | 52 | 53.8% |
+
+The trained model is **strictly worse** than Dijkstra on catch (-10pp),
+return (-2.4), and length. Higher ambush ratio without higher catch rate is
+not progress.
+
+> Note: earlier "Dijkstra 93.3% / 12.77 / 52.6%" numbers in the wiki history
+> were measured on `topologies_small` (2x2 rooms, easier). On `topologies_full`
+> with `max_episode_steps=50`, baseline is 86.7% / 11.34 / 53.8%, and is
+> byte-deterministic across processes when commit + pool + max_steps are
+> fixed (verified 2026-04-26). See [[bugs]] B11 for the full sensitivity
+> table and the recommendation to pin a frozen eval benchmark.
 
 ---
 
@@ -340,156 +424,59 @@ The trained model is **equal to the Dijkstra baseline** on catch rate.
 
 ---
 
-## Identified flaws
+## Reward function (exact, from `pursuer_env.py:1352-1430`)
 
-### 1. ONNX parity check fails at export
+```text
+Terminal:
+  +15.0   player_hp <= 0
+  -20.0   player_pos == exit_point
+   -2.0   pursuer_hp <= 0
 
-The notebook's final export cell outputs:
+Ambush bonus (fires only when pursuer enters cone from outside this step):
+  +1.5    if Chebyshev distance to player <= 2  (close-range surprise)
+  -1.0    if Chebyshev distance >= 5            (premature far detection)
+   0      if 3 <= dist <= 4                     (neutral)
+
+Approach shaping:
+  +-0.02 * (prev_chebyshev - cur_chebyshev)
+
+Exit-blocking pressure (only if scent_cache and cell reachable):
+  -0.1 * (1 - player_dist_to_exit / max_dist_on_map)
+
+Crowd:
+  -0.5    distractor <=3 from player AND pursuer <=3 from player
+
+Anti-camping:
+  -0.05 * k    while pursuer <=3 from exit AND >4 from player
+  k increments per step, resets when distance changes profile
+
+Time penalty:
+  -0.02   every step
+
+WAIT-action penalties:
+  -0.1    if action==WAIT and pursuer in player cone (frozen in spotlight)
+  -0.02   if action==WAIT and turns_since_los > 10  (blind wandering)
 ```
-max |PyTorch - ONNX| = 1.14e-04
-AssertionError: ONNX parity check failed
-```
-The threshold is `1e-4`, actual difference is `1.14e-4`. Root cause: the
-torch.onnx exporter targets opset 17 but silently falls back to opset 18
-due to an ONNX C API conversion failure. Opset 18 uses different numerical
-paths in ONNX Runtime, producing ~1 ULP disagreement. The current shipped
-`.onnx` weights have this error.
-
-**Fix**: either raise the threshold to `2e-4` (the gap is negligible for
-argmax) or export with `opset_version=18` directly to avoid the failed downgrade.
 
 ---
 
-### 2. `gen_tiny_onnx.py` uses stale observation size
+## Known bugs and open issues
 
-```python
-OBS_SIZE = 1101  # 9 channels × 11×11 + 12 scalars
-```
+Tracked in [[bugs]]. Highlights affecting the RL pipeline:
 
-Current size is 1714 (14ch × 121 + 20 scalars). The Go smoke test
-`tests/application_test/pursuer_onnx_smoke_test.go` loads
-`internal/domain/service/testdata/pursuer_tiny.onnx`. If the tiny fixture
-was regenerated with the old `gen_tiny_onnx.py` after the observation was
-expanded, it will expect 1101 floats but receive 1714 — the test passes
-only because the tiny fixture has NOT been regenerated since obs size changed.
-The moment someone runs `python rl/tools/gen_tiny_onnx.py`, the Go smoke
-test will break.
+- **B1** - ONNX parity assertion fails at threshold `1e-4` (actual `1.14e-4`).
+- **B2** - `test_observation.py` docstring says "scalar slice is 12 floats" - now 20.
+- **B3** - `train/loss` diverges (replay-buffer staleness across curriculum stages).
+- **B4** - `_observe()` runs 5 BFS/Dijkstra per step, FPS dropped 1058 -> 131.
+- **B5** - Curriculum stage 4 fires at step 2.88M of 3M (no time to learn).
+- **B6** - `observation_space` declared `low=-1` for grid floats actually in [0, 1].
+- **B7** - QR-DQN strictly worse than Dijkstra (-10pp catch, -2.4 return, +10pp ambush).
+- **B8** - `spawn_radius=(3,8)` matches `rlTriggerRadius=8`, but post-frustration
+  handoffs from Director can be out-of-distribution.
+- **B11** - Eval is byte-deterministic per-config but cross-run comparisons
+  are unreliable (eval pool / max_steps / env code change between runs).
+  Recommendation: frozen `fixtures/eval_pool/`, n_episodes >= 200, eval
+  knobs decoupled from CONFIG.
 
-**Fix**: update `OBS_SIZE = OBSERVATION_SIZE` (import from `pursuer_env`),
-and regenerate the fixture.
-
----
-
-### 3. Test docstring has stale observation size
-
-`rl/tests/test_observation.py` docstring says:
-```
-total length must be 1101 (9 channels × 11×11 + 12 scalars)
-```
-The actual tests import `OBSERVATION_SIZE` dynamically so they pass,
-but the documentation misleads anyone reading the file. Should be updated to 1714.
-
----
-
-### 4. Loss divergence in runs 1 and 3
-
-`train/loss` rises from ~0.7–2.3 to ~7–8 over 3M steps. QR-DQN's Huber
-quantile loss should be bounded if the Q-value distribution is stable.
-The divergence here is likely caused by **replay buffer staleness after
-curriculum stage changes**: the replay buffer (`buffer_size=300_000`) fills
-with episodes from earlier stages (stone/small maps). When the policy
-transitions to harder stages, Q-value targets computed from old state
-distributions no longer match the new policy, widening distributional shift.
-
-**Fix options**: flush/clear the replay buffer on curriculum stage advancement;
-or reduce `buffer_size` relative to steps per stage; or log buffer occupancy
-by stage to verify.
-
----
-
-### 5. Final evaluation uses wrong topology pool
-
-The notebook's evaluation cell creates:
-```python
-eval_env = PursuerEnv(CONFIG['topologies_dir'], ...)
-```
-`CONFIG['topologies_dir']` is set to `fixtures/topologies_small` (2×2 rooms)
-and is never mutated. The curriculum updates the VecEnv used during training
-and `eval_cb`, but this standalone eval env stays on the smallest pool.
-The reported 93.3% catch rate reflects performance on trivially small maps,
-not production 4×4 layouts.
-
-**Fix**: use `CONFIG['topologies_full']` in the final evaluation cell.
-
----
-
-### 6. RL model does not outperform Dijkstra baseline
-
-On 30 evaluation episodes (topologies_small):
-```
-QR-DQN:   93.3% catch,  12.65 return,  49.1% ambush
-Dijkstra: 93.3% catch,  12.77 return,  52.6% ambush
-```
-The RL model's ambush ratio is actually **lower** than the Dijkstra baseline.
-Potential causes:
-- Evaluation on small maps favours straight-line approaches where Dijkstra is optimal.
-- The ambush reward signal (+1.5) is too weak relative to approach shaping (±0.02/step).
-- Stealth channels (ChCovertPath, ChPlayerCone) provide good gradient info
-  but may not translate to learned ambush manoeuvres at the policy level.
-
----
-
-### 7. FPS bottleneck — expensive per-step observation
-
-At each env step, `_observe()` runs five separate BFS/Dijkstra maps:
-- `covert_path_map` (cone-weighted Dijkstra, 4-cardinal)
-- `intercept_path_map` (Dijkstra from optimal intercept cell)
-- `visited_corridor_path_map` (weighted Dijkstra)
-- `predict_player_path` (greedy descent, cheap)
-- `chase_scent_map` (8-dir BFS, run after every player move)
-
-FPS dropped from 1058 to 131 between run 2 and 3. With 8 parallel envs
-at 131 FPS, training throughput is ~1050 env steps/sec. This makes 3M steps
-~48 min, limiting iteration speed.
-
-**Fix**: cache covert_path_map per player-cone (cone only changes when player
-moves/rotates). Pre-compute intercept map once per player turn, not per step.
-Or vectorise the BFS on NumPy using scipy's CSR sparse solver.
-
----
-
-### 8. Spawn radius biases training toward close-range encounters
-
-`spawn_radius=(3, 8)` places pursuer 3–8 Chebyshev cells from player at reset.
-In the real game the Director/Alien two-tier AI only hands control to the RL
-policy when the player is within `rlTriggerRadius=8` cells. So this is
-intentional for the active-pursuit phase. But it means the policy has never
-practiced the macro "search the dungeon" phase. When the Director has been
-active for 15 turns and passes control to RL (because it finally detects a
-faint scent signal), the pursuer may be on the opposite end of the map and
-the RL policy will be in an out-of-distribution state.
-
----
-
-### 9. Curriculum stage 4 arrives too late
-
-In QRDQN_3, stage 4 (distractors + randomised profiles on full maps) fires
-at step 2.88M with only 120K steps remaining (~4% of total budget). The agent
-regresses: catch drops from 0.851 → 0.799. The stage promotion thresholds
-and/or total timesteps should be tuned so each stage gets comparable budget.
-
----
-
-### 10. Observation space declaration vs actual range
-
-```python
-self.observation_space = spaces.Box(low=-1.0, high=1.0, shape=(OBSERVATION_SIZE,), ...)
-```
-All 14 spatial channels encode values in [0, 1]. Only some scalars
-(polar angle s[19], cone dot product s[11], intercept advantage s[14])
-can be negative. Declaring `low=-1.0` for all 1694 grid floats means the
-network initialisation assumes symmetric range across the full observation,
-which is inaccurate. This is a minor issue but could slightly slow early
-learning as the policy head must learn to ignore the impossible negative
-half of the grid space. Better: declare two separate sub-spaces or use
-`low=np.concatenate([np.zeros(GRID), np.full(SCALARS, -1)])`.
+Resolved (no longer in code): `gen_tiny_onnx.py OBS_SIZE`, eval-pool mismatch,
+`tostring_rgb` matplotlib API, broken `from rl.*` notebook imports.

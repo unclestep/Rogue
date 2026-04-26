@@ -48,7 +48,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ### Comments
 
-Write simple one-line professional comment that do not contain meta. Do not use emoji, special symbols and symbols that user cannot type easily using keyboard. Only ASCII symbols for comments. 
+Write simple one-line professional comment that do not contain meta. Do not use emoji, special symbols and symbols that user cannot type easily using keyboard. Only ASCII symbols for comments. Comments describe only current code, why it is as it is. 
 
 ### Clean Code
 

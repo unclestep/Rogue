@@ -2,9 +2,9 @@
 Python-side invariants on the observation vector. These guard against the
 most common ways the Python env and the Go source can drift apart:
 
-  - total length must be 1101 (9 channels × 11×11 + 12 scalars),
+  - total length must be 1714 (14 channels x 11x11 + 20 scalars),
   - channel block is contiguous CHW,
-  - scalar slice is 12 floats,
+  - scalar slice is 20 floats,
   - walls outside the map are encoded as 0 in CH_WALKABLE,
   - self-trail decays monotonically with age,
   - cone mask lights the origin cell.

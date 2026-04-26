@@ -19,7 +19,7 @@ arch = $(word 2, $(temp))
 # -X 'main.Version=$(VERSION)'
 LDFLAGS=-ldflags="-s -w"
 
-.PHONY: all build release clean run dump-topologies dump-topologies-full dump-topologies-medium dump-topologies-small run-notebook test-rl
+.PHONY: all build release clean run dump-topologies dump-topologies-full dump-topologies-medium dump-topologies-small dump-topologies-eval run-notebook test-rl
 
 all: fmt lint test build
 
@@ -39,6 +39,19 @@ dump-topologies-medium:
 
 dump-topologies-small:
 	$(CC) run ./cmd/dump-topology -n 500 -seed 200 -rooms-h 2 -rooms-v 2 -extra-connections 0 -out rl/fixtures/topologies_small
+
+# Frozen evaluation pool (50 small + 50 medium + 50 full = 150 maps).
+# Committed to git; do NOT regenerate without bumping eval-pool version in
+# the notebook header. Seeds 9001/9101/9201 are intentionally far from any
+# training-pool seed to avoid topology overlap.
+dump-topologies-eval:
+	rm -rf rl/fixtures/eval_pool && mkdir -p rl/fixtures/eval_pool
+	$(CC) run ./cmd/dump-topology -n 50 -seed 9001 -rooms-h 2 -rooms-v 2 -extra-connections 0 -out rl/fixtures/eval_pool
+	$(CC) run ./cmd/dump-topology -n 50 -seed 9101 -rooms-h 3 -rooms-v 3 -extra-connections 1 -out /tmp/_eval_med
+	for f in /tmp/_eval_med/*.json; do mv "$$f" "rl/fixtures/eval_pool/m$$(basename $$f)"; done
+	$(CC) run ./cmd/dump-topology -n 50 -seed 9201 -rooms-h 4 -rooms-v 4 -extra-connections 2 -out /tmp/_eval_full
+	for f in /tmp/_eval_full/*.json; do mv "$$f" "rl/fixtures/eval_pool/f$$(basename $$f)"; done
+	rmdir /tmp/_eval_med /tmp/_eval_full
 
 # Opens the Pursuer training notebook in local Jupyter.
 run-notebook:
