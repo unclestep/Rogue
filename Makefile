@@ -19,7 +19,7 @@ arch = $(word 2, $(temp))
 # -X 'main.Version=$(VERSION)'
 LDFLAGS=-ldflags="-s -w"
 
-.PHONY: all build release clean run dump-topologies run-notebook test-rl
+.PHONY: all build release clean run dump-topologies dump-topologies-full dump-topologies-medium dump-topologies-small run-notebook test-rl
 
 all: fmt lint test build
 
@@ -29,17 +29,21 @@ run:
 test:
 	$(CC) test ./...
 
-# Dumps 1000 procedurally-generated dungeons as JSON into rl/topologies/ for the
-# Python Pursuer training loop. Re-run whenever the TopologyGenerator changes.
-dump-topologies:
-	$(CC) run ./cmd/dump-topology -n 1000 -out rl/topologies
+dump-topologies: dump-topologies-small dump-topologies-medium dump-topologies-full
+
+dump-topologies-full:
+	$(CC) run ./cmd/dump-topology -n 2000 -seed 42 -rooms-h 4 -rooms-v 4 -extra-connections 2 -out rl/fixtures/topologies
+
+dump-topologies-medium:
+	$(CC) run ./cmd/dump-topology -n 500 -seed 100 -rooms-h 3 -rooms-v 3 -extra-connections 1 -out rl/fixtures/topologies_medium
+
+dump-topologies-small:
+	$(CC) run ./cmd/dump-topology -n 500 -seed 200 -rooms-h 2 -rooms-v 2 -extra-connections 0 -out rl/fixtures/topologies_small
 
 # Opens the Pursuer training notebook in local Jupyter.
 run-notebook:
 	jupyter lab rl/pursuer_training.ipynb
 
-# Runs the Python-side observation/raycaster parity tests. Requires
-# `pip install -r rl/requirements.txt` (at least gymnasium + numpy + pytest).
 test-rl:
 	python -m pytest rl/tests -q
 
