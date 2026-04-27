@@ -4,6 +4,8 @@ Go implementation of Rogue (roguelike). Module: `github.com/unclestep/Rogue`.
 
 Wiki entry points:
 - [[hot]] - latest decisions, current status, what is still open.
+- [[plan]] - active plans and proposals (move to [[logs]] when done).
+- [[logs]] - append-only log of changes, experiments, decisions.
 - [[architecture]] - layered overview, game loop, RL subsystem.
 - [[conventions]] - code style, file naming, parity rules, env vars.
 - [[rl]] - RL training pipeline (env, reward, curriculum, CNN, training runs).

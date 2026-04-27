@@ -1350,31 +1350,46 @@ class PursuerEnv(gym.Env):
         Reward structure (QR-DQN):
 
         Terminal:
-          +15.0  player killed (all HP gone)
+          +20.0  player killed AND pursuer was not visible before the step (ambush kill)
+          + 8.0  player killed AND pursuer was visible before the step (visible kill)
           -20.0  player reached the exit
           -2.0   pursuer dies
 
         Ambush effect (fires every time pursuer enters player cone from outside):
-          +3.0   if dist ≤ 2  (sudden close-range appearance)
-          -1.0   if dist ≥ 5  (premature far-range detection)
+          +3.0   if dist <= 2  (sudden close-range appearance)
+          -1.0   if dist >= 5  (premature far-range detection)
 
         Dense shaping:
-          ±0.02 * Δchebyshev   approach / retreat signal
+          +-0.02 * delta_chebyshev   approach / retreat signal
+          -0.05  per step if pursuer is in player's cone now (any action)
           -0.1 * (1 - dist_player_to_exit / max_map_dist)  exit-blocking penalty
           -0.5  crowd: distractor already near player AND pursuer moves in
           -0.05 * k  anti-camp: k turns within EXIT_CAMP_RADIUS of exit
           -0.02  time penalty per step
 
         Wait action:
-          -0.1   if in player cone now  (freeze-in-spotlight)
+          -0.1   if in player cone now  (freeze-in-spotlight, on top of -0.05)
           -0.02  if blind > 10 turns   (no stealth value)
         """
         assert self.topology is not None
         r = 0.0
 
+        # --- Cone presence: needed by ambush, terminal split, and per-step penalty ---
+        in_cone_now = (
+            self._cone_mask_cache is not None
+            and self._cone_mask_cache[self.pursuer_pos[1], self.pursuer_pos[0]]
+        )
+
         # --- Terminal rewards ---
+        # Catch reward is split by stealth: a kill from outside the player's
+        # cone (ambush) is worth more than a kill while already exposed. This
+        # selects against straight-line chase while keeping catch as a positive
+        # terminal signal.
         if self.player_hp <= 0:
-            r += 15.0
+            if not self._was_visible_before_step:
+                r += 20.0
+            else:
+                r += 8.0
         if self.player_pos == self.topology.exit_point:
             r -= 20.0
         if self.pursuer_hp <= 0:
@@ -1383,10 +1398,6 @@ class PursuerEnv(gym.Env):
         # --- Ambush effect: fires every time pursuer enters the player cone
         # from outside it. `_was_visible_before_step` needs to be set by the
         # caller (step()) before _compute_reward is invoked; see step().
-        in_cone_now = (
-            self._cone_mask_cache is not None
-            and self._cone_mask_cache[self.pursuer_pos[1], self.pursuer_pos[0]]
-        )
         if in_cone_now and not self._was_visible_before_step:
             dist = max(
                 abs(self.player_pos[0] - self.pursuer_pos[0]),
@@ -1399,6 +1410,12 @@ class PursuerEnv(gym.Env):
                 r += 3.0
             elif dist >= 5:
                 r -= 1.0
+
+        # --- Per-step cone-presence penalty: pay a small constant cost for
+        # every step spent inside the player's flashlight cone. Independent
+        # of action; the WAIT-in-cone penalty below stacks on top.
+        if in_cone_now:
+            r -= 0.05
 
         # --- Approach shaping (Chebyshev) ---
         prev_dist = max(

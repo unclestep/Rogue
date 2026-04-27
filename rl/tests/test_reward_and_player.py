@@ -233,8 +233,8 @@ def _isolate(env: PursuerEnv) -> None:
     )
 
 
-def test_terminal_reward_player_caught():
-    """+15.0 when player HP reaches 0; only time penalty (-0.02) on top."""
+def test_terminal_reward_player_caught_visible():
+    """+8.0 when player HP reaches 0 while pursuer was visible (visible kill)."""
     env = _make_env()
     env.reset(seed=42)
     env.player_hp = 0
@@ -242,9 +242,25 @@ def test_terminal_reward_player_caught():
     env.pursuer_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
     env.player_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=8)
     _isolate(env)
+    env._was_visible_before_step = True
 
     r = env._compute_reward(action=ACTION_UP, prev_pos=env.pursuer_pos, pursuer_hit=False)
-    assert abs(r - 14.98) < 1e-6, f"Expected +15.0 - 0.02 = 14.98, got {r}"
+    assert abs(r - 7.98) < 1e-6, f"Expected +8.0 - 0.02 = 7.98, got {r}"
+
+
+def test_terminal_reward_player_caught_ambush():
+    """+20.0 when player HP reaches 0 from stealth (pursuer not visible last step)."""
+    env = _make_env()
+    env.reset(seed=42)
+    env.player_hp = 0
+    env.pursuer_hp = 1
+    env.pursuer_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
+    env.player_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=8)
+    _isolate(env)
+    env._was_visible_before_step = False
+
+    r = env._compute_reward(action=ACTION_UP, prev_pos=env.pursuer_pos, pursuer_hit=False)
+    assert abs(r - 19.98) < 1e-6, f"Expected +20.0 - 0.02 = 19.98, got {r}"
 
 
 def test_terminal_reward_player_escaped():
@@ -300,7 +316,7 @@ def test_approach_shaping_one_step_closer():
 
 
 def test_wait_in_cone_adds_exact_penalty():
-    """-0.1 extra when WAIT action while pursuer is inside player cone."""
+    """-0.05 cone-presence + -0.1 freeze when WAIT action while pursuer is in player cone."""
     env = _make_env()
     env.reset(seed=42)
     env.player_hp = 1
@@ -314,21 +330,21 @@ def test_wait_in_cone_adds_exact_penalty():
     env.memory = PursuerMemory()
     env.memory.turns_since_los = 5  # not blind
 
-    # No cone → no freeze penalty.
+    # No cone -> no penalties.
     env._cone_mask_cache = np.zeros(
         (env.topology.height, env.topology.width), dtype=bool
     )
     r_out = env._compute_reward(action=ACTION_WAIT, prev_pos=env.pursuer_pos, pursuer_hit=False)
 
     env._exit_camp_counter = 0
-    # Pursuer cell lit → freeze penalty fires.
+    # Pursuer cell lit -> -0.05 cone-presence + -0.1 freeze stack.
     cone = np.zeros((env.topology.height, env.topology.width), dtype=bool)
     cone[env.pursuer_pos[1], env.pursuer_pos[0]] = True
     env._cone_mask_cache = cone
     r_in = env._compute_reward(action=ACTION_WAIT, prev_pos=env.pursuer_pos, pursuer_hit=False)
 
     delta = r_in - r_out
-    assert abs(delta - (-0.1)) < 1e-6, f"Wait-in-cone penalty expected -0.1, got {delta}"
+    assert abs(delta - (-0.15)) < 1e-6, f"Wait-in-cone delta expected -0.15, got {delta}"
 
 
 def test_wait_blind_adds_exact_penalty():
@@ -359,6 +375,31 @@ def test_wait_blind_adds_exact_penalty():
 
     delta = r_blind - r_stalk
     assert abs(delta - (-0.02)) < 1e-6, f"Blind-wait penalty expected -0.02, got {delta}"
+
+
+def test_cone_presence_adds_exact_penalty():
+    """-0.05 per step when pursuer is inside player cone (action != WAIT)."""
+    env = _make_env()
+    env.reset(seed=42)
+    env.player_hp = 1
+    env.pursuer_hp = 1
+    pursuer = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
+    env.pursuer_pos = pursuer
+    env.player_pos = _pick_far_cell(env, pursuer, min_dist=5)
+    _isolate(env)
+
+    # Out of cone baseline.
+    r_out = env._compute_reward(action=ACTION_UP, prev_pos=pursuer, pursuer_hit=False)
+
+    env._exit_camp_counter = 0
+    # In cone: stack -0.05 cone-presence on top.
+    cone = np.zeros((env.topology.height, env.topology.width), dtype=bool)
+    cone[pursuer[1], pursuer[0]] = True
+    env._cone_mask_cache = cone
+    r_in = env._compute_reward(action=ACTION_UP, prev_pos=pursuer, pursuer_hit=False)
+
+    delta = r_in - r_out
+    assert abs(delta - (-0.05)) < 1e-6, f"Cone-presence penalty expected -0.05, got {delta}"
 
 
 # ---------------------------------------------------------------------------

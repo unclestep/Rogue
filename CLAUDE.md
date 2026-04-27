@@ -10,6 +10,8 @@ Use separate files for every entity: every module, service, pattern, important d
 ## Structure of wiki/
 - hot.md - latest decisions, current status of work and what is still not done
 - index.md - catalog of all project components
+- plan.md - active plans and proposals (steps + verification criteria)
+- logs.md - append-only log of changes, experiments, decisions (newest first)
 - architecture.md  - project architecture and key decisions 
 - conventions.md - code conventions
 

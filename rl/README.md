@@ -19,8 +19,8 @@ rl/
     topologies/            2000 full maps (4x4 rooms, 80x24) — committed, regen if BSP changes
     topologies_medium/     500 maps (3x3 rooms) — committed, curriculum stage 1-2
     topologies_small/      500 maps (2x2 rooms) — committed, curriculum warmup
-  models/pursuer.onnx      Trained policy weights (gitignored)
-  checkpoints/             SB3 eval checkpoints and evaluations.npz
+  models/pursuer.onnx      Trained policy weights (force-tracked; rest of models/ is gitignored)
+  checkpoints/             SB3 stage checkpoints and evaluations.npz (gitignored)
   runs/                    TensorBoard event files (gitignored)
   tests/                   Python unit tests: observation invariants, env mechanics, parity
 ```
@@ -134,27 +134,41 @@ truncated:  step_count >= max_episode_steps (randomised per episode: 40..70)
 
 ### Reward structure
 
+The reward is stealth-shifted: ambush kills are valued more than visible
+kills, and the pursuer pays a per-step cost for staying inside the player's
+flashlight cone. This is what shifts behaviour from straight-line chase
+toward covert approach.
+
 ```
 Terminal rewards:
-  +15.0   player killed (pursuer wins)
+  +20.0   player killed AND pursuer was NOT visible before the step (ambush kill)
+  + 8.0   player killed AND pursuer was     visible before the step (visible kill)
   -20.0   player reached exit (player wins)
    -2.0   pursuer dies from player counter-attack
 
-Ambush bonus/penalty (fires when pursuer enters player flashlight cone from outside):
-  +1.5    Chebyshev distance to player <= 2  (sudden close-range ambush)
+Ambush effect (fires every time pursuer enters player cone from outside):
+  +3.0    Chebyshev distance to player <= 2  (sudden close-range appearance)
   -1.0    Chebyshev distance >= 5            (detected from far away)
 
 Dense shaping (every step):
-  +-0.02 * delta_chebyshev   reward approach, penalise retreat
-  -0.1 * (1 - player_to_exit / max_dist)   pressure to intercept before exit
+  +-0.02 * delta_chebyshev                  reward approach, penalise retreat
+  -0.05   per step if pursuer is in player's cone (any action)
+  -0.1 * (1 - player_to_exit / max_dist)    pressure to intercept before exit
   -0.5    crowding: distractor already near player AND pursuer moves in
   -0.05*k anti-camp: k turns within 3 cells of exit AND far from player
   -0.02   time penalty per step
 
 WAIT penalties:
-  -0.1    if standing inside player flashlight cone
+  -0.1    if standing inside player flashlight cone (stacks on top of -0.05)
   -0.02   if TurnsSinceLOS > 10 (aimless waiting)
 ```
+
+**Why split the catch terminal.** A flat catch reward (the previous +15.0)
+makes ambush and visible kills economically identical, so the optimal
+policy reduces to Dijkstra straight-line chase. Splitting +20.0 vs +8.0
+selects against chase; the per-step cone-presence cost reinforces the same
+signal continuously. See [[plan]] Plan A for the full rationale and the
+QRDQN_4 -> QRDQN_5 measurement.
 
 ### Scripted player profiles
 
@@ -446,10 +460,13 @@ the PyTorch policy and the ONNX graph and asserting max(abs(pytorch - onnx)) < 1
 ## Testing
 
 ```bash
-make test-rl                                        # all Python tests
-python -m pytest rl/tests/test_parity.py -v        # Go <-> Python byte-exact
-python -m pytest rl/tests/test_observation.py -v   # observation shape and value invariants
-python -m pytest rl/tests/test_env.py -v           # environment mechanics
+make test-rl                                                # all Python tests
+python -m pytest rl/tests/test_parity.py -v                 # Go <-> Python byte-exact (needs Go toolchain + writable GOPATH)
+python -m pytest rl/tests/test_observation.py -v            # observation shape and value invariants
+python -m pytest rl/tests/test_env_attack.py -v             # combat / attack mechanics
+python -m pytest rl/tests/test_env_spawn.py -v              # spawn-radius and placement
+python -m pytest rl/tests/test_reward_and_player.py -v      # reward terms and scripted-player profiles
+python -m pytest rl/tests/test_domain_randomization.py -v   # episode-length randomisation
 ```
 
 The Go smoke test (`tests/application_test/pursuer_onnx_smoke_test.go`) wires `ONNXPolicy`

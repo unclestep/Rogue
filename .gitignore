@@ -56,3 +56,5 @@ __pycache__/
 checkpoints
 __pycache__
 .pytest_cache
+.pylocal/
+.claude/
