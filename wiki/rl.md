@@ -71,27 +71,37 @@ step(action):
 
 ### Reward structure
 
+Current shape (post-Plan-A and pre-QRDQN_6 implementation; [[plan]] tracks
+the per-iteration changes):
+
 ```
-Terminal:
-  +15.0   player killed
+Terminal (QRDQN_5: 20/8 split; QRDQN_6: 20/12 split — see [[plan]] B.1):
+  +20.0   player killed AND pursuer was NOT visible last step (ambush)
+  + 8.0   player killed AND pursuer WAS     visible last step (visible) — QRDQN_5
+  +12.0   ditto — QRDQN_6 (loaded from current pursuer_env.py)
   -20.0   player reached exit
-  -2.0    pursuer dies
+   -2.0   pursuer dies
 
 Ambush effect (fires when pursuer enters cone from outside):
-  +3.0    if Chebyshev dist to player <= 2  (sudden close-range, was +1.5)
+  +3.0    if Chebyshev dist to player <= 2  (sudden close-range)
   -1.0    if Chebyshev dist >= 5            (premature far detection)
 
 Dense shaping:
-  ±0.02 * Δchebyshev_to_player   approach/retreat
+  +-0.02 * clip(delta_covert_dist, -2, 2)   covert-Dijkstra approach signal — QRDQN_6 (was Chebyshev pre-Plan-B)
+  +0.05   per step if NOT in cone AND chebyshev<=3 — QRDQN_6 stealth-approach bonus
+  -0.05   per step if pursuer is in player's cone (any action) — Plan A
   -0.1 * (1 - player_to_exit/max_dist)   exit-blocking pressure
   -0.5    crowd: distractor already near player AND pursuer moves in
-  -0.05*k   anti-camp: k consecutive turns within 3 cells of exit AND far from player
+  -0.05*k anti-camp: k consecutive turns within 3 cells of exit AND far from player
   -0.02   time penalty per step
 
 WAIT penalties:
-  -0.1    if in player cone (freeze in spotlight)
+  -0.1    if in player cone (freeze in spotlight; stacks on the -0.05 cone-presence)
   -0.02   if TurnsSinceLOS > 10 (wandering without purpose)
 ```
+
+Source of truth: `rl/pursuer_env.py:_compute_reward`. The doc-string in
+that function pins the exact constants for the loaded weights.
 
 ### Scripted player profiles
 
@@ -200,7 +210,7 @@ before the pooling.
 
 ---
 
-## Training configuration (last run - QRDQN_3)
+## Training configuration (current — QRDQN_6 prep)
 
 Full `CONFIG` dict (top of `pursuer_training.ipynb`):
 
@@ -232,7 +242,7 @@ CONFIG = {
     'batch_size':            512,
     'gamma':                 0.99,
     'lr_initial':            1e-4,               # cosine decay -> lr_final
-    'lr_final':              1e-5,
+    'lr_final':              3e-5,                # QRDQN_6 (Plan C.1): 1e-5 -> 3e-5, ~3x late-stage budget
     'exploration_fraction':  0.50,
     'exploration_final_eps': 0.02,
     'train_freq':            4,
@@ -260,6 +270,12 @@ CONFIG = {
 
 **Cosine LR schedule**: half-cosine decay from `lr_initial` to `lr_final`
 over the full 3M-step run. Smoother tail convergence than step decay.
+The QRDQN_6 floor (3e-5 = 30% of `lr_initial`) is intentionally higher
+than QRDQN_5's (1e-5 = 10%) — see [[plan]] Plan QRDQN_6 C.1.
+
+**Gradient clipping**: `max_grad_norm=1.0` on the QRDQN constructor (was
+SB3 default 10.0). Symptomatic damping for stage-3 loss spikes — see
+[[plan]] Plan QRDQN_6 C.2.
 
 ### Notebook cell order (`pursuer_training.ipynb`)
 
@@ -316,147 +332,40 @@ Promotion side-effects:
 
 ---
 
-## Three training runs — comparison
+## Training runs — short index
 
-### Run 1 — QRDQN_1 (April 20, 2M steps)
+The notebook (`pursuer_training.ipynb`) "Run history" section is the
+canonical source of run-by-run write-ups, including pre-Plan-A (QRDQN_1/2
+/3) era observation/architecture changes. CSVs in `rl/runs_summary/` feed
+the in-notebook comparison plot. [[logs]] holds the chronological decision
+log. This page only carries the one-line index.
 
-**What changed vs baseline**: first run with the full 5-stage curriculum. 
-Based on `gen_tiny_onnx.py` which still uses `OBS_SIZE = 1101`, the
-observation at this stage had **9 channels × 11×11 + 12 scalars = 1101 floats**.
-The key "shortest path to player" channel was **ChScent** — the Dijkstra
-BFS distance gradient from the player's current position. No intercept/visited
-corridor/future player pos channels existed yet.
+| Run | Steps | Goal | Eval (eval_pool/v1, where applicable) | Status |
+|---|---|---|---|---|
+| QRDQN_1 | 2M | Pipeline sanity, 2-channel obs (`ChScent` + `ChWalkable`) | (no eval pool) | superseded |
+| QRDQN_2 | 3M | Observation enrichment to 11 channels + SE channel attention | (no eval pool) | superseded; `curriculum_stage` tag missing in TB events was a callback bug, training itself ran with curriculum |
+| QRDQN_3 | 3M | Spatial promotion (intercept/visited/future as channels), cosine LR, dilated conv | (no eval pool) | superseded |
+| QRDQN_4 | 3M | B1..B12 bug-fix sweep | catch 0.755, ambush 0.607, in_cone 0.156 — strictly worse than Dijkstra on catch, equal on stealth | superseded |
+| QRDQN_5 | 3M | Plan A: stealth-shifted reward (+20/+8 split, -0.05 cone-presence) | catch 0.685, ambush **0.929**, in_cone 0.127, stealth **0.802** | **shipped** (anchor branch `qrdqn5-baseline`) |
+| QRDQN_6 | 3M | Plan B+C bundled (recover catch + push in_cone <0.10 + fix loss divergence) | TBD | code in place, training pending; revert criteria frozen in [[plan]] |
 
-| Metric | First @step | Last @step | Peak |
-|--------|-------------|-----------|------|
-| catch_rate | 0.086 @40K | 0.751 @2M | 0.801 @1.76M |
-| eval/mean_reward | −6.16 @10K | 9.31 @2M | 11.86 @1.41M |
-| train/loss | 0.67 @10K | 6.92 @2M | — (diverging) |
-| FPS | 927 | 270 | — |
-
-Curriculum stages reached: 1 (at 1.76M), 2 (1.84M), 3 (1.92M) — all three
-stages fired in the last 240K steps. Only 80K steps per stage, not enough
-to converge. The agent basically just started on full maps before training ended.
-
----
-
-### Run 2 — QRDQN_2 (April 24 08:18, 3M steps)
-
-**What changed**: new scalars added — map position X/Y (s[16-17]), polar
-distance/angle to player (s[18-19]), intercept stats (s[12-14]), player
-in-corridor flag (s[15]). Total scalars: 20. Also likely the additional
-channels (ChInterceptPath, ChVisitedCorridorPath, ChFuturePlayerPos) were
-added in the observation but the architecture was possibly still a simpler MLP.
-**No curriculum advancement** was recorded — the training stayed on stage 0
-(stone + small topologies) throughout all 3M steps, either because curriculum
-was disabled or thresholds were never met (possible with a harder/larger env).
-
-| Metric | First @step | Last @step | Peak |
-|--------|-------------|-----------|------|
-| catch_rate | 0.056 @40K | 0.812 @3M | 0.822 @2.92M |
-| eval/mean_reward | −2.14 @10K | 13.08 @3M | ~13.08 |
-| train/loss | 1.16 @50K | 3.15 @3M | — (stable) |
-| FPS | 1058 | 131 | — |
-
-Very slow start (0.056 catch at 40K vs 0.086 for run 1). This is consistent
-with training on full 4×4 maps from the start (more rooms = harder search).
-The most stable loss curve and **best final metrics** of all three runs —
-steady improvement without the disruption of curriculum stage changes.
+**Open items inherited from QRDQN_5**:
+- Stage-3 loss divergence (peak 56.86) — addressed in QRDQN_6 by C.1+C.2.
+- `in_cone` 0.127 vs target 0.10 — addressed in QRDQN_6 by B.3 covert-path
+  approach shaping.
+- `catch` 0.685 vs gate 0.70 — addressed in QRDQN_6 by B.1 (20:12 split) +
+  B.2 (close-and-unseen bonus).
 
 ---
 
-### Run 3 — QRDQN_3 (April 24 18:32, 3M steps) — current weights
+## Reward function — source of truth
 
-**What changed**: full architecture — 14 channels, 20 scalars = 1714 floats.
-`PursuerResCNN` (ResNet + SE + dilated conv). Cosine LR schedule.
-5-stage curriculum activated.
-
-| Metric | First @step | Last @step | Peak |
-|--------|-------------|-----------|------|
-| catch_rate | 0.095 @40K | 0.799 @3M | 0.863 @1M |
-| eval/mean_reward | −9.28 @10K | 6.71 @3M | 12.91 @1.01M |
-| train/loss | 2.34 @50K | 8.11 @3M | — (diverging) |
-| FPS | 657 | 139 | — |
-
-Curriculum stages: 1 (1.04M), 2 (2.72M), 3 (2.80M), 4 (2.88M).
-Stages 2-4 all fired in the last 280K steps. Stage 4 (distractors +
-randomized profiles) fired with only 120K steps remaining — essentially
-no time to learn the new task. This caused a visible catch_rate regression
-from 0.851 (step 2.92M) to 0.799 (step 3M).
-
-**Profile evaluation** (notebook output, evaluated on `topologies_full`):
-```
-stone           86.7%   11.95
-training_dummy  86.7%   11.98
-default         76.7%    8.69
-aggressive      80.0%   10.01
-cautious        73.3%    7.37
-timid           70.0%    6.92
-```
-
-**vs Dijkstra baseline** (`topologies_full`, 30 episodes, current eval cell):
-
-| policy | return | catch | in_cone | len | 1st_hit | hits | ambush |
-|--------|--------|-------|---------|-----|---------|------|--------|
-| QR-DQN | 8.95 +/- 10.59 | 76.7% | 0.173 | 20.0 | 11.7 | 47 | 63.8% |
-| Baseline (Dijkstra) | 11.34 +/- 8.31 | **86.7%** | 0.196 | 18.7 | 13.3 | 52 | 53.8% |
-
-The trained model is **strictly worse** than Dijkstra on catch (-10pp),
-return (-2.4), and length. Higher ambush ratio without higher catch rate is
-not progress.
-
-> Note: earlier "Dijkstra 93.3% / 12.77 / 52.6%" numbers in the wiki history
-> were measured on `topologies_small` (2x2 rooms, easier). On `topologies_full`
-> with `max_episode_steps=50`, baseline is 86.7% / 11.34 / 53.8%, and is
-> byte-deterministic across processes when commit + pool + max_steps are
-> fixed (verified 2026-04-26). See [[bugs]] B11 for the full sensitivity
-> table and the recommendation to pin a frozen eval benchmark.
-
----
-
-## Summary table (TensorBoard, final metrics)
-
-| Run | Steps | Final catch | Final reward | Loss trend | Curriculum |
-|-----|-------|-------------|-------------|-----------|-----------|
-| QRDQN_1 | 2M | 0.751 | 9.31 | 0.67→6.92 ↑↑ | stages 1-3 in last 240K |
-| QRDQN_2 | 3M | 0.812 | 13.08 | 1.16→3.15 ↑ | none (stuck at stage 0) |
-| QRDQN_3 | 3M | 0.799 | 6.71 | 2.34→8.11 ↑↑ | stages 1-4, stages 2-4 last 280K |
-
----
-
-## Reward function (exact, from `pursuer_env.py:1352-1430`)
-
-```text
-Terminal:
-  +15.0   player_hp <= 0
-  -20.0   player_pos == exit_point
-   -2.0   pursuer_hp <= 0
-
-Ambush bonus (fires only when pursuer enters cone from outside this step):
-  +1.5    if Chebyshev distance to player <= 2  (close-range surprise)
-  -1.0    if Chebyshev distance >= 5            (premature far detection)
-   0      if 3 <= dist <= 4                     (neutral)
-
-Approach shaping:
-  +-0.02 * (prev_chebyshev - cur_chebyshev)
-
-Exit-blocking pressure (only if scent_cache and cell reachable):
-  -0.1 * (1 - player_dist_to_exit / max_dist_on_map)
-
-Crowd:
-  -0.5    distractor <=3 from player AND pursuer <=3 from player
-
-Anti-camping:
-  -0.05 * k    while pursuer <=3 from exit AND >4 from player
-  k increments per step, resets when distance changes profile
-
-Time penalty:
-  -0.02   every step
-
-WAIT-action penalties:
-  -0.1    if action==WAIT and pursuer in player cone (frozen in spotlight)
-  -0.02   if action==WAIT and turns_since_los > 10  (blind wandering)
-```
+The exact reward constants live in `rl/pursuer_env.py:_compute_reward`
+docstring; that doc-string is updated alongside the code on every Plan
+change. Wiki-side summary is in the *Reward structure* block earlier
+in this page (post-Plan-A, pre-QRDQN_6 dual annotation). [[plan]] tracks
+the per-iteration deltas. Don't expect this page to know what's loaded
+in `pursuer.onnx` — that depends on which run produced it.
 
 ---
 

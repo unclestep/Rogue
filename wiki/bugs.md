@@ -29,19 +29,21 @@ load-bearing invariant is that PyTorch and ONNX pick the same action.
 **Was**: docstring said `scalar slice is 12 floats` (current value: 20).
 **Fix**: docstring now reads `scalar slice is 20 floats`.
 
-### B3. Loss divergence on curriculum-heavy runs — verify-on-retrain / major
+### B3. Loss divergence on curriculum-heavy runs — partially fixed / major
 **Symptom**: `train/loss` climbed 2.34 -> 8.11 over QRDQN_3 (3M steps).
-TensorBoard analysis confirmed the **loss spike at step ~1.04M coincides
-exactly with the stage-0 -> stage-1 promotion** - replay-buffer
-staleness across topology distributions.
-**Fix**: `CurriculumCallback._flush_replay_buffer()` (notebook cell 11) now
-drops the oldest `curriculum_buffer_flush_frac=0.7` of replay-buffer
-transitions on every stage promotion. The most-recent 30% are physically
-rotated to the front of the circular buffer so SB3's sampling stays correct
-(`buf.pos = keep`, `buf.full = False`).
-**Verify**: next training run; the `train/loss` spike at promotion should
-disappear (or at least be much smaller). TB tag `curriculum/buffer_after_flush`
-logs the post-flush size.
+TensorBoard analysis confirmed the loss spike at step ~1.04M coincides
+exactly with the stage-0 -> stage-1 promotion - replay-buffer staleness
+across topology distributions.
+**Mechanical fix**: `CurriculumCallback._flush_replay_buffer()` drops
+the oldest 70% of replay-buffer transitions on every stage promotion.
+Verified working: post-flush buffer = 11250 transitions/env = 30% of
+300K, TB tag `curriculum/buffer_after_flush` confirms.
+**Status**: the flush itself works, but did NOT prevent loss divergence
+in QRDQN_4 (peak 39.76 @ 2.25M) or QRDQN_5 (peak 56.86 @ 2.58M). The
+divergence migrated from stage-0/1 to stage-3/4 transitions. eval reward
+kept rising in QRDQN_5 to step 2.99M, so policy is not broken — Q-target
+regression is noisy. Further fix attempts in QRDQN_6 ([[plan]] Plan
+QRDQN_6 C.1+C.2: LR floor 3e-5, max_grad_norm=1.0).
 
 ### B4. FPS bottleneck — fixed / major
 **Was**: `_observe()` ran 5 BFS/Dijkstra per env step + a *second* BFS in
@@ -65,7 +67,7 @@ bypassing the cache). FPS dropped 1058 -> 131; 6h wall time on 3M steps.
 Curriculum-weighted (stages 0-2 are stone/dummy on small/medium maps),
 expect overall **~2x** training speedup -> ~3h instead of 6h.
 
-### B5. Curriculum stage 4 fires too late — verify-on-retrain / major
+### B5. Curriculum stage 4 fires too late — fixed / major
 **Symptom**: in QRDQN_3, stages 1-4 fired at 1.04M / 2.72M / 2.80M / 2.88M -
 stages 2-4 got just 9% of total budget combined.
 **Root causes**:
@@ -83,8 +85,8 @@ stages 2-4 got just 9% of total budget combined.
   this many steps regardless of threshold.
 With these knobs each of the 5 stages gets between 300K and 800K of the 3M
 budget (target distribution).
-**Verify**: next run; check `metrics/curriculum_stage` transitions are
-roughly evenly spread.
+**Verified**: QRDQN_4 onward — stages fire at ~0.8M / 1.28M / 1.6M / 2.4M
+(spread, not bunched). Confirmed in TB across QRDQN_4 and QRDQN_5.
 
 ### B6. Observation space declared `low=-1.0` for grid floats actually in [0, 1] — fixed / minor
 **Was**: `spaces.Box(low=-1.0, high=1.0, ...)` used a single scalar bound
@@ -96,29 +98,25 @@ across all 1714 floats; grid channels are in `[0, 1]`.
 normalise from the Box spec); the next retrain will get a slightly cleaner
 init signal.
 
-### B7. RL model does not outperform Dijkstra baseline — verify-on-retrain / major
-**Latest evaluation** (notebook eval cell, 30 episodes, `topologies_full`,
-`max_episode_steps=50`, *before* fixes):
+### B7. RL model does not outperform Dijkstra baseline — fixed (re-scoped) / major
+**Original framing** (pre-Plan-A): QR-DQN was strictly worse than Dijkstra
+on catch / return / length. The bug-fix sweep B1..B12 closed mechanical
+issues (cone parity, replay flush, curriculum spread, spawn radius, ambush
+bonus +1.5 -> +3.0) but QRDQN_4 still tied Dijkstra on the **stealth**
+metrics that actually matter (`ambush_ratio`, `in_cone`).
 
-| policy | return | catch | in_cone | len | 1st_hit | hits | ambush |
-|--------|--------|-------|---------|-----|---------|------|--------|
-| QR-DQN | 8.95 +/- 10.59 | 76.7% | 0.173 | 20.0 | 11.7 | 47 | 63.8% |
-| Baseline (Dijkstra) | 11.34 +/- 8.31 | 86.7% | 0.196 | 18.7 | 13.3 | 52 | 53.8% |
+**Resolution**: the goal was reframed (see [[plan]] Plan A and the
+`project_pursuer_goal` memory): catch is no longer the target — beating
+Dijkstra on `ambush_ratio` (higher) and `in_cone` (lower) on
+`eval_pool/v1` is. QRDQN_5 (Plan A reward shift) cleared this with large
+margin: ambush 0.929 vs 0.607, in_cone 0.127 vs 0.167. Catch dropped
+from 0.755 to 0.685 as an intentional tradeoff. Shipped as the production
+model; anchor branch `qrdqn5-baseline`.
 
-The trained model was strictly worse than baseline on catch (-10pp), return
-(-2.4) and length.
-**Fixes** (will be tested on the next retrain):
-- B12 - cone parity (TRAIN distribution matched INFERENCE distribution).
-  This may be the single biggest contributor: the current model was trained
-  on a Python-shaped cone but plays Go-shaped cones at inference.
-- B3 - replay-buffer flush (loss should stop diverging).
-- B5 - curriculum gets balanced per-stage budget (later stages actually trained).
-- B8 - wider spawn radius for stages 3/4 (better generalization).
-- Reward rebalance: ambush bonus boosted **+1.5 -> +3.0** (`pursuer_env.py:1402-1404`).
-  Rationale: the ~50-step approach-shaping accumulator can reach ±1.0,
-  drowning the +1.5 ambush bonus. +3.0 makes ambush the dominant signal.
+QRDQN_6 (in flight) bundles Plan B + C to push `in_cone < 0.10` and
+recover `catch >= 0.70`. Outcome to be appended to [[logs]].
 
-### B8. Spawn radius bias toward close-range encounters — verify-on-retrain / minor
+### B8. Spawn radius bias toward close-range encounters — fixed / minor
 **Was**: `spawn_radius=(3, 8)` matched `rlTriggerRadius=8` so the env exactly
 covered the Director->RL handoff radius. But after `rlFrustrationLimit`
 cycles the Director can hand control with the player much further than 8.
@@ -127,8 +125,9 @@ cycles the Director can hand control with the player much further than 8.
 - Stage 0/1 (stone): `(3, 8)` - unchanged, matches Director handoff.
 - Stage 2 (dummy on medium maps): `(3, 10)`.
 - Stage 3/4 (default on full maps): **`(3, 15)`** - covers the OOD case.
-**Verify**: next run; sanity-rollout from spawn_radius=(10, 15) should not
-collapse catch rate.
+**Verified**: QRDQN_4 onward trained with the wider radii without catch-rate
+collapse; QRDQN_5 ships at 0.685 catch on the eval pool. The spawn-radius
+fix is no longer the bottleneck.
 
 ### B11. Eval drifted across runs because eval setup was mutable — fixed / major
 **Was**: comparing baseline numbers across training runs was meaningless

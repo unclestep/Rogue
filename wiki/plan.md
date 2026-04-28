@@ -6,6 +6,80 @@ completed plans to [[logs]] when finished.
 
 ---
 
+## Plan QRDQN_6 — combined B + C retrain (in-progress, 2026-04-28)
+
+**Status**: code in place, awaiting training. This is a single-shot retrain
+that bundles every deferred change from Plans B and C below into one run,
+so we pay one 3-4h compute cost rather than two. User-approved. Anchor
+branch `qrdqn5-baseline` already pins QRDQN_5 weights; revert is one
+checkout away if any criterion below trips.
+
+### What changed in the codebase
+
+Reward (`rl/pursuer_env.py:_compute_reward`):
+- **B.1** — visible-kill terminal raised from `+8.0` to `+12.0`. The
+  20:8 ratio in QRDQN_5 starved catch (-7pp); 20:12 keeps ambush as the
+  preferred outcome but lets the agent close out uncertain visible kills
+  it had been declining.
+- **B.2** — per-step `+0.05` stealth-approach bonus when
+  `not in_cone AND chebyshev_to_player <= 3`. Encourages "creep up close
+  while unseen" rather than only rewarding the final cone-entry.
+- **B.3** — approach shaping `0.02 * delta_chebyshev` replaced by
+  `0.02 * clip(delta_covert_dist, -2, 2)`. Covert-Dijkstra from pursuer
+  with cone_penalty=10 produces a gradient that selects detours through
+  dark corridors when those exist, instead of straight-line chase.
+- Covert map is now computed once in `step()` after cone update, used
+  by both `_compute_reward` (B.3 lookup) and `_observe` (ChCovertPath
+  channel). Single Dijkstra per step, two consumers.
+
+Optimisation (`rl/pursuer_training.ipynb`):
+- **C.1** — `lr_final` raised from `1e-5` to `3e-5`. Earlier wiki text
+  claimed QRDQN_5's late-stage LR was "effectively zero" — wrong: it was
+  10% of init. The actual issue is that 10% of init is still small
+  enough that stage-3/4 distribution shift cannot be absorbed; bumping to
+  30% gives ~3x the late-stage adaptation budget.
+- **C.2** — `max_grad_norm=1.0` (was SB3 default 10.0). Caps the
+  effective LR step on gradient spikes by 10x; symptomatic damping on
+  the stage-3 loss divergence (peak 56.86 in QRDQN_5).
+
+### Frozen revert criteria
+
+Recorded BEFORE training so the ship/revert decision is deterministic.
+
+| metric | revert (snap back to QRDQN_5) | ship as QRDQN_6 |
+|---|---|---|
+| `ambush_ratio` | < 0.85 | >= 0.85 |
+| `in_cone` | > 0.13 | <= 0.13 (project-goal win if < 0.10) |
+| `stealth` (composite) | < 0.75 | >= 0.78 |
+| `catch` | < 0.65 | >= 0.70 |
+| `loss tail-mean` (last 10%) | (informational only) | < 25 = ship + close Plan C |
+
+**Revert if ANY of `ambush_ratio`, `in_cone`, `stealth`, `catch` falls in
+the revert column.** No partial wins. Loss is informational — even if
+loss is still divergent, we ship if the four behavioral metrics all clear.
+
+Revert command (one-liner):
+```
+git checkout qrdqn5-baseline -- rl/models/pursuer.onnx rl/models/pursuer.onnx.data
+```
+
+Then close this Plan as "experiment, did not ship" and add a [[logs]]
+entry with the QRDQN_6 metrics for posterity.
+
+### Probability estimates (recorded for honest post-mortem)
+
+Forecast by Claude before training:
+
+| outcome | probability |
+|---|---|
+| strict improvement on all 4 primary metrics | ~25-30% |
+| net-positive (most improve, none cross revert thresholds) | ~50% |
+| meaningful regression -> revert | ~20-25% |
+
+Test these against the actual outcome in [[logs]] post-eval.
+
+---
+
 ## Plan A — Stealth-shift reward — DONE (2026-04-27, QRDQN_5)
 
 Closed: ambush 92.9% (target > 65%), in_cone 0.127 (target < 0.10, missed by

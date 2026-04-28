@@ -954,6 +954,7 @@ class PursuerEnv(gym.Env):
         self._chase_scent_cache: Optional[np.ndarray] = None
         self._chase_scent_key: Optional[tuple[int, int]] = None
         self._covert_map_cache: Optional[np.ndarray] = None
+        self._prev_covert_to_player: Optional[float] = None
         self._intercept_map_cache: Optional[np.ndarray] = None
         self._intercept_map_key: Optional[tuple[int, int]] = None
         self._future_path_cache: Optional[list[tuple[int, int]]] = None
@@ -992,6 +993,7 @@ class PursuerEnv(gym.Env):
         self._chase_scent_cache = chase_scent_map(self.topology, self.player_pos)
         self._chase_scent_key = self.player_pos
         self._covert_map_cache = None
+        self._prev_covert_to_player = None
         self._intercept_map_cache = None
         self._intercept_map_key = None
         self._future_path_cache = None
@@ -1015,6 +1017,15 @@ class PursuerEnv(gym.Env):
             self.distractor_pos = self._place_distractor()
 
         self._cone_mask_cache = self._compute_cone()
+
+        # Covert map cache fed by step() and reused by _observe(); seed it on
+        # reset so the first step's approach shaping has a reference value.
+        self._covert_map_cache = covert_path_map(
+            self.topology, self.pursuer_pos, self._cone_mask_cache
+        )
+        self._prev_covert_to_player = float(
+            self._covert_map_cache[self.player_pos[1], self.player_pos[0]]
+        )
 
         obs = self._observe()
         return obs, {
@@ -1143,6 +1154,14 @@ class PursuerEnv(gym.Env):
 
         # Cone snapshot after player moved/rotated — used next tick.
         self._cone_mask_cache = self._compute_cone()
+
+        # Refresh covert-path Dijkstra from new pursuer position with new
+        # cone mask. Used by _compute_reward() for covert-distance approach
+        # shaping AND by _observe() for the ChCovertPath channel — one
+        # Dijkstra per step, two consumers.
+        self._covert_map_cache = covert_path_map(
+            self.topology, self.pursuer_pos, self._cone_mask_cache
+        )
 
         # --- Reward --------------------------------------------------------
         reward = self._compute_reward(
@@ -1294,9 +1313,13 @@ class PursuerEnv(gym.Env):
 
     def _observe(self) -> np.ndarray:
         assert self.topology is not None
-        covert = covert_path_map(
-            self.topology, self.pursuer_pos, self._cone_mask_cache
-        )
+        # step() and reset() pre-populate _covert_map_cache from the current
+        # (pursuer_pos, cone_mask) pair; reuse it instead of recomputing.
+        if self._covert_map_cache is None:
+            self._covert_map_cache = covert_path_map(
+                self.topology, self.pursuer_pos, self._cone_mask_cache
+            )
+        covert = self._covert_map_cache
         tile = int(self.topology.tiles[self.player_pos[1], self.player_pos[0]])
         is_corridor = 1.0 if tile == TILE_CORRIDOR else 0.0
         exit_scent = self.exit_scent_map()
@@ -1347,11 +1370,11 @@ class PursuerEnv(gym.Env):
         pursuer_hit: bool,
     ) -> float:
         """
-        Reward structure (QR-DQN):
+        Reward structure (QR-DQN, post-Plan-B):
 
         Terminal:
           +20.0  player killed AND pursuer was not visible before the step (ambush kill)
-          + 8.0  player killed AND pursuer was visible before the step (visible kill)
+          +12.0  player killed AND pursuer was visible before the step (visible kill, B.1: was +8.0)
           -20.0  player reached the exit
           -2.0   pursuer dies
 
@@ -1360,7 +1383,8 @@ class PursuerEnv(gym.Env):
           -1.0   if dist >= 5  (premature far-range detection)
 
         Dense shaping:
-          +-0.02 * delta_chebyshev   approach / retreat signal
+          +-0.02 * clip(delta_covert_dist, -2, 2)   covert-Dijkstra approach signal (B.3)
+          +0.05  per step if NOT in cone AND chebyshev distance to player <= 3 (B.2 stealth-approach)
           -0.05  per step if pursuer is in player's cone now (any action)
           -0.1 * (1 - dist_player_to_exit / max_map_dist)  exit-blocking penalty
           -0.5  crowd: distractor already near player AND pursuer moves in
@@ -1389,7 +1413,11 @@ class PursuerEnv(gym.Env):
             if not self._was_visible_before_step:
                 r += 20.0
             else:
-                r += 8.0
+                # B.1: visible-kill bumped 8.0 -> 12.0. The 20:8 ratio in
+                # QRDQN_5 starved catch (-7pp); 20:12 keeps ambush as the
+                # preferred outcome while letting the agent close out
+                # uncertain visible kills it had been declining.
+                r += 12.0
         if self.player_pos == self.topology.exit_point:
             r -= 20.0
         if self.pursuer_hp <= 0:
@@ -1417,16 +1445,43 @@ class PursuerEnv(gym.Env):
         if in_cone_now:
             r -= 0.05
 
-        # --- Approach shaping (Chebyshev) ---
-        prev_dist = max(
-            abs(self.player_pos[0] - prev_pos[0]),
-            abs(self.player_pos[1] - prev_pos[1]),
-        )
         cur_dist = max(
             abs(self.player_pos[0] - self.pursuer_pos[0]),
             abs(self.player_pos[1] - self.pursuer_pos[1]),
         )
-        r += 0.02 * (prev_dist - cur_dist)
+
+        # B.2: stealth-approach bonus. Encourage closing the gap while not
+        # already exposed, not just rewarding the final cone-entry. Bounded
+        # by chebyshev<=3 so it cannot be farmed at distance, and gated by
+        # NOT-in-cone so it does not subsidise the agent for sitting in
+        # the spotlight near the player.
+        if not in_cone_now and cur_dist <= 3:
+            r += 0.05
+
+        # B.3: approach shaping uses covert-Dijkstra distance instead of
+        # Chebyshev. Chebyshev rewards the straight-line Dijkstra approach
+        # the baseline already does; covert distance penalises crossing
+        # cone-lit cells (penalty=10 per cone-cell), so the gradient now
+        # selects detours through dark corridors when those exist.
+        if (
+            self._covert_map_cache is not None
+            and self._prev_covert_to_player is not None
+        ):
+            cur_covert = float(
+                self._covert_map_cache[self.player_pos[1], self.player_pos[0]]
+            )
+            INF_THRESHOLD = 1e8
+            if (
+                self._prev_covert_to_player < INF_THRESHOLD
+                and cur_covert < INF_THRESHOLD
+            ):
+                # Cone toggling can swing covert distance by up to
+                # cone_penalty (10) on a single step, dwarfing the intended
+                # signal. Clip to keep magnitude comparable to chebyshev's
+                # natural [-1, 1] range.
+                delta = self._prev_covert_to_player - cur_covert
+                r += 0.02 * max(-2.0, min(2.0, delta))
+            self._prev_covert_to_player = cur_covert
 
         # --- Exit-blocking penalty: proportional to player's proximity to exit ---
         if self._exit_scent_cache is not None:

@@ -1,85 +1,105 @@
-# Hot - current status (2026-04-27 session, evening)
+# Hot - current status (2026-04-28 session)
 
 ## Active branch
 `feature/advanced_pipeline` (off `develop`). Anchor branch
-`qrdqn5-baseline` created at the same commit so QRDQN_5 weights remain
-recoverable regardless of subsequent work.
+`qrdqn5-baseline` pins QRDQN_5 weights so any QRDQN_6 outcome is
+recoverable with a single `git checkout`.
 
 ## Theme of the branch
 RL observation pipeline: 14 channels x 11x11 + 20 scalars = 1714 floats.
 PursuerResCNN. 5-stage topology-aware curriculum. Cosine LR.
-Stealth-shifted reward (Plan A).
 
 **Goal**: beat Dijkstra on `ambush_ratio` (higher) and `in_cone` (lower) on
-`eval_pool/v1`. **Achieved.** See [[plan]] Plan A (now closed) and [[logs]].
+`eval_pool/v1`. **Achieved by QRDQN_5** (ambush 0.929, in_cone 0.127 vs
+baseline 0.607 / 0.167). One additional retrain QRDQN_6 in flight to push
+`in_cone < 0.10` and recover `catch >= 0.70`.
 
-## Status: Plan A closed, ready to ship
+## Status: QRDQN_6 code prepared, awaiting training
 
-QRDQN_5 evaluation (200 episodes, eval_pool/v1, sha256[:12]=`0d940a0bfd82`):
+Code in place. Tests 59/59 green. User confirmed the package; awaiting
+the local 3-4h training run.
 
-| metric         | baseline (Dijkstra) | QRDQN_5 | target | result |
-|---|---|---|---|---|
-| `return`       | 10.41 +/- 12.76     | 11.32 +/- 16.05 | — | over baseline |
-| `catch`        | 0.835               | 0.685   | >= 0.70 | -1.5pp under gate |
-| `in_cone`      | 0.167               | 0.127   | < 0.10  | < baseline, 2.7pp over target |
-| `ambush_ratio` | 0.607               | **0.929** | > 0.65 | +32pp |
-| `stealth`      | 0.440               | **0.802** | > 0.55 | +0.36 |
-| `len`          | 19.3                | 25.4    | — | longer creep approaches |
+### Plan QRDQN_6 — combined B + C (single retrain)
 
-Primary stealth metrics beat baseline with large margin. Catch dropped 7pp
-relative to QRDQN_4 — accepted as a tradeoff (see [[logs]] decision entry).
+Reward (`rl/pursuer_env.py:_compute_reward`):
+- **B.1** — visible-kill terminal +8.0 -> +12.0. Softens 20:8 ratio that
+  starved catch in QRDQN_5; ambush still preferred but visible kill is
+  not economically punishing anymore.
+- **B.2** — `+0.05` per step when `not in_cone AND chebyshev <= 3`.
+  Encourages "creep up close while unseen", not just final cone-entry.
+- **B.3** — approach shaping `0.02 * delta_chebyshev` replaced by
+  `0.02 * clip(delta_covert_dist, -2, 2)`. Covert-Dijkstra (cone_penalty
+  =10 per cone-cell) selects detours through dark corridors. Single
+  Dijkstra per `step()`, reused by `_observe`.
 
-## What changed in this session
+Optimisation (`rl/pursuer_training.ipynb`):
+- **C.1** — `lr_final` 1e-5 -> 3e-5. **Correction during this session**:
+  earlier wiki claimed QRDQN_5's late-stage LR was "effectively zero" —
+  wrong, it was 10% of init. Bumping floor to 30% of init gives ~3x more
+  late-stage adaptation budget, which is the actual thing we want.
+- **C.2** — `max_grad_norm=1.0` (was SB3 default 10). Caps gradient-spike
+  step size 10x; symptomatic damping for stage-3 loss divergence.
 
-### Plan A retrain (QRDQN_5)
-- Reward shaped per [[plan]] Plan A steps 1+2 (catch terminal split, cone
-  presence penalty). Step 5 added composite `stealth` column.
-- 3M training steps, ~7h wall on local box.
-- TB run `runs/QRDQN_5`. New tags `metrics/ambush_ratio` and
-  `metrics/in_cone_ratio` confirmed: tail-mean ambush 0.915, in_cone 0.087
-  in-distribution (eval-pool slightly harder).
-- Loss divergence at stage-3 transition got *worse* (peak 56.86 @ 2.58M,
-  vs 39.76 in QRDQN_4). Eval reward kept rising to step 2.99M, so policy
-  not broken — Q-regression noisy. Open tech-debt: see [[plan]] Plan C.
+### Frozen revert criteria (decided BEFORE training)
 
-### Wiki + docs
-- [[plan]] rewritten: Plan A closed, Plans B/C added as deferred with full
-  pros-vs-cons tables and trigger conditions, plus a future-retrain
-  decision matrix.
-- `rl/README.md`: reward structure updated to Plan A semantics
-  (+20/+8 split, +3.0 ambush, -0.05 cone-presence). Test list corrected
-  (no more nonexistent `test_env.py`). `models/pursuer.onnx` correctly
-  marked as force-tracked.
-- Root `README.md`: fact-checked, no drift found.
-- `.gitignore`: added `.pylocal/` and `.claude/` (local-only artifacts).
+| metric | revert | ship |
+|---|---|---|
+| `ambush_ratio` | < 0.85 | >= 0.85 |
+| `in_cone` | > 0.13 | <= 0.13 |
+| `stealth` | < 0.75 | >= 0.78 |
+| `catch` | < 0.65 | >= 0.70 |
 
-### Parity verification
-- `rl/tests/test_parity.py` ran clean: 5/5 scenarios PASS. Go module cache
-  permission issue resolved on host (`chown -R user:user /home/user/go`).
-- `pip install --target /app/.pylocal pytest` for the test runner; runs
-  via `PYTHONPATH=/app/.pylocal:/app /app/.pylocal/bin/pytest ...`.
+ANY metric in revert column -> snap back to QRDQN_5 via
+`git checkout qrdqn5-baseline -- rl/models/`. Loss is informational, not
+a revert trigger. Probability estimates: ~25-30% strict-improve all 4 /
+~50% net-positive ship / ~20-25% revert.
+
+### Reference: QRDQN_5 baseline (200 ep, eval_pool/v1, sha256[:12]=0d940a0bfd82)
+
+| metric | baseline (Dijkstra) | QRDQN_5 |
+|---|---|---|
+| `return` | 10.41 +/- 12.76 | 11.32 +/- 16.05 |
+| `catch` | 0.835 | 0.685 |
+| `in_cone` | 0.167 | 0.127 |
+| `ambush_ratio` | 0.607 | **0.929** |
+| `stealth` | 0.440 | **0.802** |
 
 ## Test status
-- Python (non-parity): 51/51 pass (last verified 2026-04-27 morning).
-- Parity (Go<->Python observation): 5/5 PASS this session.
-- Go: not re-run this session; no Go code changed.
+- `rl/tests/test_reward_and_player.py`: 18/18 PASS (4 new tests for
+  B.1/B.2/B.3: `test_terminal_reward_player_caught_visible` updated to
+  +12.0; `test_approach_shaping_covert_delta`,
+  `test_approach_shaping_covert_clipped`,
+  `test_stealth_approach_bonus_close_and_unseen`,
+  `test_stealth_approach_bonus_suppressed_in_cone`).
+- Full RL suite: 59/59 PASS.
+- Parity (Go<->Python): 5/5 PASS (verified 2026-04-27).
+- Go: not re-run; no Go code changed.
 
-## Uncommitted working-tree changes
-- `rl/pursuer_env.py` — Plan A reward (catch terminal split, cone-presence).
-- `rl/pursuer_training.ipynb` — MetricsCallback ambush/in_cone tags,
-  eval-cell stealth column.
-- `rl/tests/test_reward_and_player.py` — terminal split + cone-presence tests.
-- `rl/models/pursuer.onnx{,.data}` — QRDQN_5 weights.
-- `rl/README.md` — reward + tests sections.
-- `wiki/plan.md`, `wiki/logs.md` (new files), `wiki/hot.md`,
-  `wiki/index.md`, `CLAUDE.md`.
+## Uncommitted working-tree changes (post B+C prep)
+- `rl/pursuer_env.py` — B.1+B.2+B.3 reward changes; covert-map cache
+  pre-computed in `step()` and reused by `_observe`.
+- `rl/pursuer_training.ipynb` — C.1 (lr_final 3e-5), C.2 (max_grad_norm
+  =1.0), plus all the docs/run-history/ONNX-fix work from the prior
+  session.
+- `rl/tests/test_reward_and_player.py` — 4 new tests, _isolate updated.
+- `rl/models/pursuer.onnx{,.data}` — still QRDQN_5 weights (will be
+  rewritten by ONNX-export cell after QRDQN_6 finishes).
+- `rl/README.md` — Plan A reward semantics (will need a small bump after
+  QRDQN_6 if it ships).
+- `rl/runs_summary/QRDQN_{1..5}.csv` — historical CSVs, tracked.
+- `rl/tools/dump_run_summary.py` — TB->CSV exporter.
+- `wiki/plan.md` — Plan QRDQN_6 with frozen revert criteria, plus
+  Plans A (closed), B/C (now folded into QRDQN_6).
+- `wiki/hot.md`, `wiki/logs.md`, `wiki/index.md`, `wiki/rl.md`,
+  `CLAUDE.md`.
 - `.gitignore` — `.pylocal/`, `.claude/`.
 - `.obsidian/workspace.json` — IDE noise.
 
 ## Key invariants to preserve
-1. `BuildObservation` (Go) = `PursuerEnv._observe` (Python), byte-identical.
-   Parity verified 2026-04-27.
-2. `ObservationChannels=14`, `ObservationScalars=20`, `ObservationSize=1714`.
+1. `BuildObservation` (Go) = `PursuerEnv._observe` (Python),
+   byte-identical. Verified 2026-04-27.
+2. `ObservationChannels=14`, `ObservationScalars=20`, `ObservationSize=
+   1714`. **Unchanged in QRDQN_6** (no observation layout changes).
 3. ONNX input name `"input"`, output `"logits"`.
 4. Flashlight: `FlashlightHalfFOV=45 deg`, `FlashlightRange=3` cells.
 5. **Eval benchmark**: only `eval_pool/v1` (sha256[:12]=`0d940a0bfd82`).
@@ -87,10 +107,13 @@ relative to QRDQN_4 — accepted as a tradeoff (see [[logs]] decision entry).
    `rlFrustrationLimit=15`.
 7. **Anchor**: branch `qrdqn5-baseline` pins QRDQN_5 weights for revert.
 
-## Next steps
-1. Commit current state (code + weights + wiki) on `feature/advanced_pipeline`.
-2. Open PR `feature/advanced_pipeline -> develop`.
-3. Plans B and C remain deferred ([[plan]]). Trigger only under specific
-   conditions documented there. Default action is "do not retrain".
-4. Open tech-debt: stage-3 loss divergence (Plan C). Bundle with any
-   future retrain.
+## Next steps (waiting on user)
+1. Run training: open `rl/pursuer_training.ipynb`, run all cells (3-4h).
+2. Eval cell will print the comparison table.
+3. Compare against the revert criteria above.
+4. **If ship**: update [[hot]] + [[logs]] + [[rl]] + run history; commit
+   QRDQN_6 weights + code.
+5. **If revert**: `git checkout qrdqn5-baseline -- rl/models/`, log the
+   experiment in [[logs]] with the actual numbers and a post-mortem
+   against the recorded probability estimates, ship QRDQN_5 from where
+   we paused.

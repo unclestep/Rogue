@@ -15,6 +15,61 @@ Entry format:
 
 ---
 
+## 2026-04-28 — QRDQN_6 implementation (B + C bundled, awaiting training)
+**Type**: code change + experiment setup
+**Refs**: [[plan]] Plan QRDQN_6, [[hot]]
+**What**: User approved one more retrain to push `in_cone < 0.10` and
+recover `catch >= 0.70`. Bundled all five deferred fixes from Plans B
+and C into a single retrain (one lottery ticket, not two):
+
+Reward (`rl/pursuer_env.py:_compute_reward`):
+- B.1 visible-kill terminal +8.0 -> +12.0 (softens 20:8 ratio).
+- B.2 `+0.05` per step when `not in_cone AND chebyshev <= 3`
+  (stealth-approach bonus).
+- B.3 approach shaping switched from `delta_chebyshev` to
+  `clip(delta_covert_dist, -2, 2)` * 0.02. Covert-Dijkstra map is now
+  pre-computed in `step()` after cone update and reused by `_observe`,
+  so it's one Dijkstra per step with two consumers.
+
+Optimisation (`rl/pursuer_training.ipynb`):
+- C.1 `lr_final` 1e-5 -> 3e-5. **Correction during this session**: I
+  earlier wrote in [[plan]] that QRDQN_5's late-stage LR was
+  "effectively zero" — wrong, it was 10% of init (the configured
+  floor). Bumping the floor to 30% gives ~3x more late-stage adaptation
+  budget, which was the actual goal of C.1. Updated the [[plan]] entry.
+- C.2 `max_grad_norm=1.0` (was SB3 default 10.0). 10x stricter clip on
+  gradient spikes; symptomatic damping for the stage-3 loss divergence
+  (peak 56.86 in QRDQN_5).
+
+Tests (`rl/tests/test_reward_and_player.py`):
+- `test_terminal_reward_player_caught_visible` updated 7.98 -> 11.98.
+- New: `test_approach_shaping_covert_delta` (covert-delta is the
+  approach-shaping basis), `test_approach_shaping_covert_clipped`
+  (clip bound at +/-2 verified), `test_stealth_approach_bonus_close_and_unseen`
+  (B.2 fires when chebyshev<=3 AND not in cone),
+  `test_stealth_approach_bonus_suppressed_in_cone` (B.2 must NOT fire
+  in cone).
+- `_isolate()` helper extended to clear `_covert_map_cache` and
+  `_prev_covert_to_player`. Three pre-existing tests
+  (`test_wait_penalty_blind_vs_stalking`,
+  `test_wait_penalty_harshest_in_cone`,
+  `test_wait_in_cone_adds_exact_penalty`,
+  `test_wait_blind_adds_exact_penalty`) had to add explicit
+  covert-cache clearing because they did manual setup instead of
+  calling `_isolate()` and were getting contamination from B.3.
+
+[[plan]]: added Plan QRDQN_6 section at top with frozen revert criteria
+(`ambush_ratio >= 0.85`, `in_cone <= 0.13`, `stealth >= 0.78`,
+`catch >= 0.70`; ANY metric in the revert column -> snap to QRDQN_5
+weights via `git checkout qrdqn5-baseline -- rl/models/`). Recorded
+probability estimates pre-training: ~25-30% strict-improve / ~50%
+net-positive / ~20-25% revert.
+
+**Result**: 59/59 RL tests green. Awaiting user to run the 3-4h
+training. Post-training eval will determine ship vs revert against the
+frozen criteria above. Outcome to be appended in a follow-up entry with
+post-mortem against the probability estimates.
+
 ## 2026-04-27 (evening) — Plan A closure + docs sweep
 **Type**: decision + code change
 **Refs**: [[plan]] Plans A/B/C, [[hot]], TB run `runs/QRDQN_5`
