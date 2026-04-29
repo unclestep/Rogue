@@ -167,8 +167,7 @@ WAIT penalties:
 makes ambush and visible kills economically identical, so the optimal
 policy reduces to Dijkstra straight-line chase. Splitting +20.0 vs +8.0
 selects against chase; the per-step cone-presence cost reinforces the same
-signal continuously. See [[plan]] Plan A for the full rationale and the
-QRDQN_4 -> QRDQN_5 measurement.
+signal continuously.
 
 ### Scripted player profiles
 
