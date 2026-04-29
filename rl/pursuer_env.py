@@ -1,21 +1,3 @@
-"""
-Pursuer training environment (Gymnasium).
-
-This module is the Python mirror of Go's
-internal/domain/service/rl_observation.go, logic_monster_pursuer.go and
-sys_raycaster.go. Observation layout, action enum, raycaster algorithm and
-memory decay must stay byte-for-byte identical to the Go side — the ONNX
-model trained here is loaded by ONNXPolicy in production and will produce
-garbage if the feature vector drifts.
-
-Dungeon topologies are **not** generated here. They come from JSON files
-produced by `cmd/dump-topology` (see PR 3.5), so the BSP layout used during
-training is exactly what the game ships.
-
-Reward shaping follows the plan in
-/home/codespace/.claude/plans/binary-hugging-turing.md (PR 4 section).
-"""
-
 from __future__ import annotations
 
 import dataclasses
@@ -29,10 +11,6 @@ from typing import Callable, Optional
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
-
-# ---------------------------------------------------------------------------
-# Constants mirrored from Go.
-# ---------------------------------------------------------------------------
 
 # Observation geometry — see rl_observation.go:22-44.
 OBSERVATION_CROP_SIZE = 11
@@ -101,11 +79,6 @@ TILE_EXIT = 6
 
 FLASHLIGHT_HALF_FOV_DEG = 45.0
 FLASHLIGHT_RANGE = 3.0   # short-cone: stealth-horror feel, more ambush corners inside rooms
-
-
-# ---------------------------------------------------------------------------
-# Domain structs.
-# ---------------------------------------------------------------------------
 
 
 @dataclasses.dataclass
@@ -181,10 +154,7 @@ class PursuerMemory:
             self.trail = self.trail[-PURSUER_TRAIL_CAPACITY:]
 
 
-# ---------------------------------------------------------------------------
 # Raycaster port.
-# ---------------------------------------------------------------------------
-
 
 def _blocks_light(tile: int) -> bool:
     # Mirrors sys_raycaster.go blocksLight.
@@ -331,9 +301,7 @@ def has_los(topology: Topology, a: tuple[int, int], b: tuple[int, int]) -> bool:
             return False
 
 
-# ---------------------------------------------------------------------------
 # Observation builder.
-# ---------------------------------------------------------------------------
 
 
 def _set_channel(obs: np.ndarray, channel: int, x: int, y: int, v: float) -> None:
@@ -636,9 +604,7 @@ def build_observation(
     return obs
 
 
-# ---------------------------------------------------------------------------
-# Scent gradient (for FallbackPolicy-equivalent reward shaping).
-# ---------------------------------------------------------------------------
+# Scent gradient (for FallbackPolicy-equivalent reward shaping)
 
 
 def chase_scent_map(topology: Topology, player_pos: tuple[int, int]) -> np.ndarray:
@@ -863,9 +829,7 @@ def covert_path_map(
     return dist
 
 
-# ---------------------------------------------------------------------------
-# Environment.
-# ---------------------------------------------------------------------------
+# Environment
 
 
 PlayerPolicyFn = Callable[["PursuerEnv", random.Random], tuple[int, float]]
@@ -965,9 +929,7 @@ class PursuerEnv(gym.Env):
         self._spawn_radius = spawn_radius
         self._was_visible_before_step = False
 
-    # ------------------------------------------------------------------
-    # Gymnasium API.
-    # ------------------------------------------------------------------
+    # Gymnasium API
 
     def reset(self, *, seed: Optional[int] = None, options=None):  # noqa: D401
         if seed is not None:
@@ -1079,7 +1041,7 @@ class PursuerEnv(gym.Env):
     def step(self, action: int):
         assert self.topology is not None, "reset() before step()"
 
-        # --- Pursuer moves --------------------------------------------------
+        # Pursuer moves
         prev_pos = self.pursuer_pos
         self.pursuer_pos = self._try_move(
             self.pursuer_pos, int(action), blocker=self.player_pos
@@ -1110,7 +1072,7 @@ class PursuerEnv(gym.Env):
         if pursuer_hit:
             self.player_hp -= self._attack_damage
 
-        # --- Scripted player reacts ----------------------------------------
+        # Scripted player reacts
         player_prev_pos = self.player_pos
         player_action, new_angle = self._player_policy(self, self._rng)
         self.player_angle = new_angle
@@ -1192,9 +1154,7 @@ class PursuerEnv(gym.Env):
         }
         return obs, reward, terminated, truncated, info
 
-    # ------------------------------------------------------------------
-    # Internals.
-    # ------------------------------------------------------------------
+    # Internals
 
     def set_curriculum(self, distractor_prob: float, randomize_profile: bool, fixed_profile: str):
         self._distractor_prob = float(distractor_prob)
@@ -1398,13 +1358,13 @@ class PursuerEnv(gym.Env):
         assert self.topology is not None
         r = 0.0
 
-        # --- Cone presence: needed by ambush, terminal split, and per-step penalty ---
+        # Cone presence: needed by ambush, terminal split, and per-step penalty
         in_cone_now = (
             self._cone_mask_cache is not None
             and self._cone_mask_cache[self.pursuer_pos[1], self.pursuer_pos[0]]
         )
 
-        # --- Terminal rewards ---
+        # Terminal rewards
         # Catch reward is split by stealth: a kill from outside the player's
         # cone (ambush) is worth more than a kill while already exposed. This
         # selects against straight-line chase while keeping catch as a positive
@@ -1423,7 +1383,7 @@ class PursuerEnv(gym.Env):
         if self.pursuer_hp <= 0:
             r -= 2.0
 
-        # --- Ambush effect: fires every time pursuer enters the player cone
+        # Ambush effect: fires every time pursuer enters the player cone
         # from outside it. `_was_visible_before_step` needs to be set by the
         # caller (step()) before _compute_reward is invoked; see step().
         if in_cone_now and not self._was_visible_before_step:
@@ -1439,7 +1399,7 @@ class PursuerEnv(gym.Env):
             elif dist >= 5:
                 r -= 1.0
 
-        # --- Per-step cone-presence penalty: pay a small constant cost for
+        # Per-step cone-presence penalty: pay a small constant cost for
         # every step spent inside the player's flashlight cone. Independent
         # of action; the WAIT-in-cone penalty below stacks on top.
         if in_cone_now:
@@ -1450,7 +1410,7 @@ class PursuerEnv(gym.Env):
             abs(self.player_pos[1] - self.pursuer_pos[1]),
         )
 
-        # B.2: stealth-approach bonus. Encourage closing the gap while not
+        # Stealth-approach bonus. Encourage closing the gap while not
         # already exposed, not just rewarding the final cone-entry. Bounded
         # by chebyshev<=3 so it cannot be farmed at distance, and gated by
         # NOT-in-cone so it does not subsidise the agent for sitting in
@@ -1458,7 +1418,7 @@ class PursuerEnv(gym.Env):
         if not in_cone_now and cur_dist <= 3:
             r += 0.05
 
-        # B.3: approach shaping uses covert-Dijkstra distance instead of
+        # Approach shaping uses covert-Dijkstra distance instead of
         # Chebyshev. Chebyshev rewards the straight-line Dijkstra approach
         # the baseline already does; covert distance penalises crossing
         # cone-lit cells (penalty=10 per cone-cell), so the gradient now
@@ -1483,7 +1443,7 @@ class PursuerEnv(gym.Env):
                 r += 0.02 * max(-2.0, min(2.0, delta))
             self._prev_covert_to_player = cur_covert
 
-        # --- Exit-blocking penalty: proportional to player's proximity to exit ---
+        # Exit-blocking penalty: proportional to player's proximity to exit
         if self._exit_scent_cache is not None:
             px, py = self.player_pos
             player_dist_to_exit = int(self._exit_scent_cache[py, px])
@@ -1492,7 +1452,7 @@ class PursuerEnv(gym.Env):
                 if max_dist_val > 0:
                     r -= 0.1 * (1.0 - player_dist_to_exit / max_dist_val)
 
-        # --- Crowd penalty: punish piling onto already-covered player ---
+        # Crowd penalty: punish piling onto already-covered player
         if self.distractor_pos is not None:
             dist_distractor_to_player = max(
                 abs(self.player_pos[0] - self.distractor_pos[0]),
@@ -1501,7 +1461,7 @@ class PursuerEnv(gym.Env):
             if dist_distractor_to_player <= 3 and cur_dist <= 3:
                 r -= 0.5
 
-        # --- Anti-camping near exit (escalating) ---
+        # Anti-camping near exit (escalating)
         EXIT_CAMP_RADIUS = 3
         EXIT_CAMP_INTERCEPT_RADIUS = 4
         exit_x, exit_y = self.topology.exit_point
@@ -1518,10 +1478,10 @@ class PursuerEnv(gym.Env):
         else:
             self._exit_camp_counter = 0
 
-        # --- Time penalty ---
+        # Time penalty
         r -= 0.02
 
-        # --- Wait penalties ---
+        # Wait penalties
         if action == ACTION_WAIT:
             if in_cone_now:
                 r -= 0.1

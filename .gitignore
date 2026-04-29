@@ -58,3 +58,8 @@ __pycache__
 .pytest_cache
 .pylocal/
 .claude/
+.obsidian/
+CLAUDE.md
+
+wiki/
+
