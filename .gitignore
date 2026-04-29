@@ -49,7 +49,6 @@ build
 # !/rl/fixtures/parity/**
 /rl/runs/
 /rl/checkpoints/
-/rl/models/
 __pycache__/
 .ipynb_checkpoints/
 
@@ -61,5 +60,4 @@ __pycache__
 .obsidian/
 CLAUDE.md
 
-wiki/
-
+wiki
