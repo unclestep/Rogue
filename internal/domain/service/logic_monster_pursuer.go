@@ -101,6 +101,12 @@ func (pb *PursuerBehavior) updateMemory(ctx *model.SessionContext, actor *model.
 	}
 
 	player, _, have := nearestAlivePlayer(ctx.Playthrough, actor.Pos)
+	if have {
+		mem.PlayerTrail = append(mem.PlayerTrail, player.Pos)
+		if len(mem.PlayerTrail) > PlayerTrailCapacity {
+			mem.PlayerTrail = mem.PlayerTrail[len(mem.PlayerTrail)-PlayerTrailCapacity:]
+		}
+	}
 	if have && hasLOS(m, actor.Pos, player.Pos) {
 		mem.LastSeen = player.Pos
 		mem.TurnsSinceLOS = 0

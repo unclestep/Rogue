@@ -29,7 +29,7 @@ type sector struct {
 	xMin, yMin, xMax, yMax int
 }
 
-func (t *TopologyGenerator) Gen(ctx *model.SessionContext, mapWidth, mapHeight, roomCountHorizontal, roomCountVertical int) {
+func (t *TopologyGenerator) Gen(ctx *model.SessionContext, mapWidth, mapHeight, roomCountHorizontal, roomCountVertical, extraConnections int) {
 	if !t.canFitGrid(mapWidth, mapHeight, roomCountHorizontal, roomCountVertical) {
 		return
 	}
@@ -39,6 +39,9 @@ func (t *TopologyGenerator) Gen(ctx *model.SessionContext, mapWidth, mapHeight, 
 	t.createRooms(blueprint, sectors, ctx.Rng())
 	t.createEntranceAndExit(blueprint, ctx.Rng())
 	t.connectRooms(blueprint)
+	if extraConnections > 0 {
+		t.addExtraConnections(blueprint, extraConnections, ctx.Rng())
+	}
 	ctx.Playthrough.Map = model.NewMapFromBlueprint(blueprint)
 }
 
@@ -231,6 +234,45 @@ func (t *TopologyGenerator) connectRooms(blueprint *model.MapBlueprint) {
 			default:
 			}
 		}
+	}
+}
+
+// addExtraConnections carves up to `count` additional corridors between random
+// room pairs, giving the map loops and alternative routes instead of a pure
+// spanning chain. Reuses findDiggingPath; duplicates (picking the same pair twice)
+// just take advantage of the cheap-corridor cost and add no visible extra path.
+func (t *TopologyGenerator) addExtraConnections(blueprint *model.MapBlueprint, count int, rng *rand.Rand) {
+	rooms := blueprint.Rooms
+	if len(rooms) < 2 || count <= 0 {
+		return
+	}
+	added := 0
+	attempts := 0
+	maxAttempts := count * 10
+	for added < count && attempts < maxAttempts {
+		attempts++
+		i := rng.Intn(len(rooms))
+		j := rng.Intn(len(rooms))
+		if i == j {
+			continue
+		}
+		path, ok := t.findDiggingPath(blueprint, rooms[i], rooms[j])
+		if !ok {
+			continue
+		}
+		for _, p := range path {
+			x, y := p.X, p.Y
+			tile := &blueprint.TileGrid[y][x]
+			switch tile.Type {
+			case model.Empty:
+				tile.Type = model.Corridor
+			case model.Wall:
+				tile.Type = model.OpenDoor
+				blueprint.Doors[geometry.Point{X: x, Y: y}] = &model.DoorMetadata{Pos: p}
+			default:
+			}
+		}
+		added++
 	}
 }
 

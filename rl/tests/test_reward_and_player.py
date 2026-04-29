@@ -131,6 +131,9 @@ def test_wait_penalty_blind_vs_stalking(topology):
     env._cone_mask_cache = np.zeros(
         (env.topology.height, env.topology.width), dtype=bool
     )
+    # Disable B.3 covert-approach contamination from reset().
+    env._covert_map_cache = None
+    env._prev_covert_to_player = None
 
     env.memory = PursuerMemory()
     env.memory.turns_since_los = 5  # stalking: recent sighting
@@ -154,6 +157,8 @@ def test_wait_penalty_harshest_in_cone(topology):
     env.player_pos = _pick_far_cell(env, env.pursuer_pos, min_dist=8)
     env._prev_scent_val = None
     env._exit_camp_counter = 0
+    env._covert_map_cache = None
+    env._prev_covert_to_player = None
     env.memory = PursuerMemory()
     env.memory.turns_since_los = 5
 
@@ -231,20 +236,41 @@ def _isolate(env: PursuerEnv) -> None:
     env._cone_mask_cache = np.zeros(
         (env.topology.height, env.topology.width), dtype=bool
     )
+    # Disable covert-distance approach shaping unless test sets these up.
+    env._covert_map_cache = None
+    env._prev_covert_to_player = None
 
 
-def test_terminal_reward_player_caught():
-    """+15.0 when player HP reaches 0; only time penalty (-0.02) on top."""
+def test_terminal_reward_player_caught_visible():
+    """+12.0 when player HP reaches 0 while pursuer was visible (visible kill, B.1: was +8.0)."""
     env = _make_env()
     env.reset(seed=42)
     env.player_hp = 0
     env.pursuer_hp = 1
     env.pursuer_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
-    env.player_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=8)
+    # Anchor player FAR from pursuer so the B.2 stealth-approach bonus
+    # (chebyshev<=3 AND not in_cone) does not fire and pollute the assertion.
+    env.player_pos = _pick_far_cell(env, env.pursuer_pos, min_dist=5)
     _isolate(env)
+    env._was_visible_before_step = True
 
     r = env._compute_reward(action=ACTION_UP, prev_pos=env.pursuer_pos, pursuer_hit=False)
-    assert abs(r - 14.98) < 1e-6, f"Expected +15.0 - 0.02 = 14.98, got {r}"
+    assert abs(r - 11.98) < 1e-6, f"Expected +12.0 - 0.02 = 11.98, got {r}"
+
+
+def test_terminal_reward_player_caught_ambush():
+    """+20.0 when player HP reaches 0 from stealth (pursuer not visible last step)."""
+    env = _make_env()
+    env.reset(seed=42)
+    env.player_hp = 0
+    env.pursuer_hp = 1
+    env.pursuer_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
+    env.player_pos = _pick_far_cell(env, env.pursuer_pos, min_dist=5)
+    _isolate(env)
+    env._was_visible_before_step = False
+
+    r = env._compute_reward(action=ACTION_UP, prev_pos=env.pursuer_pos, pursuer_hit=False)
+    assert abs(r - 19.98) < 1e-6, f"Expected +20.0 - 0.02 = 19.98, got {r}"
 
 
 def test_terminal_reward_player_escaped():
@@ -268,39 +294,131 @@ def test_terminal_reward_pursuer_death():
     env.pursuer_hp = 0
     env.player_hp = 1
     env.pursuer_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
-    env.player_pos = _pick_far_cell(env, env.topology.exit_point, min_dist=8)
+    env.player_pos = _pick_far_cell(env, env.pursuer_pos, min_dist=5)
     _isolate(env)
 
     r = env._compute_reward(action=ACTION_UP, prev_pos=env.pursuer_pos, pursuer_hit=False)
     assert abs(r - (-2.02)) < 1e-6, f"Expected -2.0 - 0.02 = -2.02, got {r}"
 
 
-def test_approach_shaping_one_step_closer():
-    """Moving one step closer to player adds exactly +0.02 reward."""
+def test_approach_shaping_covert_delta():
+    """B.3: approach shaping = 0.02 * clip(delta_covert_dist, -2, 2).
+    delta = previous covert distance to player - current covert distance.
+    Positive delta (got closer in covert terms) -> positive reward."""
+    from rl.pursuer_env import covert_path_map
+
     env = _make_env()
     env.reset(seed=42)
     env.player_hp = 1
     env.pursuer_hp = 1
     pursuer = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
     env.pursuer_pos = pursuer
-    # Player 5 cells east — no need to be walkable for reward calc.
-    env.player_pos = (pursuer[0] + 5, pursuer[1])
+    env.player_pos = _pick_far_cell(env, pursuer, min_dist=5)
     _isolate(env)
+    # Populate covert cache for the current pos with no cone (zeros from _isolate).
+    env._covert_map_cache = covert_path_map(
+        env.topology, pursuer, env._cone_mask_cache
+    )
+    cur_covert = float(env._covert_map_cache[env.player_pos[1], env.player_pos[0]])
 
-    # Baseline: prev_pos == pursuer_pos → approach = 0.
+    # Baseline: prev == cur -> delta 0 -> no contribution from approach.
+    env._prev_covert_to_player = cur_covert
     r_same = env._compute_reward(action=ACTION_UP, prev_pos=pursuer, pursuer_hit=False)
-    env._exit_camp_counter = 0
 
-    # One step west means previous position was further from player.
-    prev_west = (pursuer[0] - 1, pursuer[1])
-    r_closer = env._compute_reward(action=ACTION_UP, prev_pos=prev_west, pursuer_hit=False)
+    env._exit_camp_counter = 0
+    # Pretend last step's covert distance was 1 unit higher -> delta=+1 -> +0.02.
+    env._prev_covert_to_player = cur_covert + 1.0
+    r_closer = env._compute_reward(action=ACTION_UP, prev_pos=pursuer, pursuer_hit=False)
 
     diff = r_closer - r_same
-    assert abs(diff - 0.02) < 1e-6, f"Approach delta expected 0.02, got {diff}"
+    assert abs(diff - 0.02) < 1e-6, f"Covert approach delta expected +0.02, got {diff}"
+
+
+def test_approach_shaping_covert_clipped():
+    """delta_covert larger than +/-2 is clipped (cone toggling can spike covert by ~10)."""
+    from rl.pursuer_env import covert_path_map
+
+    env = _make_env()
+    env.reset(seed=42)
+    env.player_hp = 1
+    env.pursuer_hp = 1
+    pursuer = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
+    env.pursuer_pos = pursuer
+    env.player_pos = _pick_far_cell(env, pursuer, min_dist=5)
+    _isolate(env)
+    env._covert_map_cache = covert_path_map(
+        env.topology, pursuer, env._cone_mask_cache
+    )
+    cur_covert = float(env._covert_map_cache[env.player_pos[1], env.player_pos[0]])
+
+    env._prev_covert_to_player = cur_covert
+    r_zero = env._compute_reward(action=ACTION_UP, prev_pos=pursuer, pursuer_hit=False)
+
+    env._exit_camp_counter = 0
+    # delta = +9 -> clipped to +2 -> +0.04 contribution.
+    env._prev_covert_to_player = cur_covert + 9.0
+    r_huge = env._compute_reward(action=ACTION_UP, prev_pos=pursuer, pursuer_hit=False)
+
+    assert abs((r_huge - r_zero) - 0.04) < 1e-6, (
+        f"Clipped covert delta expected +0.04, got {r_huge - r_zero}"
+    )
+
+
+def test_stealth_approach_bonus_close_and_unseen():
+    """B.2: +0.05 per step when chebyshev<=3 AND pursuer is NOT in player cone."""
+    env = _make_env()
+    env.reset(seed=42)
+    env.player_hp = 1
+    env.pursuer_hp = 1
+    pursuer = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
+    env.pursuer_pos = pursuer
+    _isolate(env)
+
+    # Far baseline: chebyshev = 5 -> no bonus.
+    env.player_pos = (pursuer[0] + 5, pursuer[1])
+    r_far = env._compute_reward(action=ACTION_UP, prev_pos=pursuer, pursuer_hit=False)
+
+    env._exit_camp_counter = 0
+    # Close: chebyshev = 3, NOT in cone (cone all-zeros from _isolate) -> +0.05.
+    env.player_pos = (pursuer[0] + 3, pursuer[1])
+    r_close = env._compute_reward(action=ACTION_UP, prev_pos=pursuer, pursuer_hit=False)
+
+    diff = r_close - r_far
+    assert abs(diff - 0.05) < 1e-6, f"Stealth-approach bonus expected +0.05, got {diff}"
+
+
+def test_stealth_approach_bonus_suppressed_in_cone():
+    """B.2 must NOT fire when pursuer is in cone, even within chebyshev<=3."""
+    env = _make_env()
+    env.reset(seed=42)
+    env.player_hp = 1
+    env.pursuer_hp = 1
+    pursuer = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
+    env.pursuer_pos = pursuer
+    env.player_pos = (pursuer[0] + 2, pursuer[1])  # close
+    _isolate(env)
+
+    # Out of cone -> bonus fires.
+    r_unseen = env._compute_reward(action=ACTION_UP, prev_pos=pursuer, pursuer_hit=False)
+
+    env._exit_camp_counter = 0
+    # Pursuer cell lit -> bonus suppressed; -0.05 cone-presence kicks in.
+    cone = np.zeros((env.topology.height, env.topology.width), dtype=bool)
+    cone[pursuer[1], pursuer[0]] = True
+    env._cone_mask_cache = cone
+    r_seen = env._compute_reward(action=ACTION_UP, prev_pos=pursuer, pursuer_hit=False)
+
+    # r_unseen has +0.05 bonus, no cone penalty.
+    # r_seen has no bonus, -0.05 cone penalty.
+    # Total swing: -0.10.
+    diff = r_seen - r_unseen
+    assert abs(diff - (-0.10)) < 1e-6, (
+        f"Suppression of B.2 + cone-presence stack expected -0.10, got {diff}"
+    )
 
 
 def test_wait_in_cone_adds_exact_penalty():
-    """-0.1 extra when WAIT action while pursuer is inside player cone."""
+    """-0.05 cone-presence + -0.1 freeze when WAIT action while pursuer is in player cone."""
     env = _make_env()
     env.reset(seed=42)
     env.player_hp = 1
@@ -311,24 +429,26 @@ def test_wait_in_cone_adds_exact_penalty():
     env.distractor_pos = None
     env._was_visible_before_step = True
     env._exit_camp_counter = 0
+    env._covert_map_cache = None
+    env._prev_covert_to_player = None
     env.memory = PursuerMemory()
     env.memory.turns_since_los = 5  # not blind
 
-    # No cone → no freeze penalty.
+    # No cone -> no penalties.
     env._cone_mask_cache = np.zeros(
         (env.topology.height, env.topology.width), dtype=bool
     )
     r_out = env._compute_reward(action=ACTION_WAIT, prev_pos=env.pursuer_pos, pursuer_hit=False)
 
     env._exit_camp_counter = 0
-    # Pursuer cell lit → freeze penalty fires.
+    # Pursuer cell lit -> -0.05 cone-presence + -0.1 freeze stack.
     cone = np.zeros((env.topology.height, env.topology.width), dtype=bool)
     cone[env.pursuer_pos[1], env.pursuer_pos[0]] = True
     env._cone_mask_cache = cone
     r_in = env._compute_reward(action=ACTION_WAIT, prev_pos=env.pursuer_pos, pursuer_hit=False)
 
     delta = r_in - r_out
-    assert abs(delta - (-0.1)) < 1e-6, f"Wait-in-cone penalty expected -0.1, got {delta}"
+    assert abs(delta - (-0.15)) < 1e-6, f"Wait-in-cone delta expected -0.15, got {delta}"
 
 
 def test_wait_blind_adds_exact_penalty():
@@ -343,6 +463,8 @@ def test_wait_blind_adds_exact_penalty():
     env.distractor_pos = None
     env._was_visible_before_step = True
     env._exit_camp_counter = 0
+    env._covert_map_cache = None
+    env._prev_covert_to_player = None
     # No cone: only the blind penalty can fire.
     env._cone_mask_cache = np.zeros(
         (env.topology.height, env.topology.width), dtype=bool
@@ -359,6 +481,31 @@ def test_wait_blind_adds_exact_penalty():
 
     delta = r_blind - r_stalk
     assert abs(delta - (-0.02)) < 1e-6, f"Blind-wait penalty expected -0.02, got {delta}"
+
+
+def test_cone_presence_adds_exact_penalty():
+    """-0.05 per step when pursuer is inside player cone (action != WAIT)."""
+    env = _make_env()
+    env.reset(seed=42)
+    env.player_hp = 1
+    env.pursuer_hp = 1
+    pursuer = _pick_far_cell(env, env.topology.exit_point, min_dist=10)
+    env.pursuer_pos = pursuer
+    env.player_pos = _pick_far_cell(env, pursuer, min_dist=5)
+    _isolate(env)
+
+    # Out of cone baseline.
+    r_out = env._compute_reward(action=ACTION_UP, prev_pos=pursuer, pursuer_hit=False)
+
+    env._exit_camp_counter = 0
+    # In cone: stack -0.05 cone-presence on top.
+    cone = np.zeros((env.topology.height, env.topology.width), dtype=bool)
+    cone[pursuer[1], pursuer[0]] = True
+    env._cone_mask_cache = cone
+    r_in = env._compute_reward(action=ACTION_UP, prev_pos=pursuer, pursuer_hit=False)
+
+    delta = r_in - r_out
+    assert abs(delta - (-0.05)) < 1e-6, f"Cone-presence penalty expected -0.05, got {delta}"
 
 
 # ---------------------------------------------------------------------------

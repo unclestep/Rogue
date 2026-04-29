@@ -1,0 +1,16 @@
+{
+  "topology": "topologies/0000.json",
+  "pursuer": {"pos": {"x": 7, "y": 8}, "hp_frac": 1.0, "stamina_frac": 1.0},
+  "player": {"pos": {"x": 10, "y": 8}, "aim_angle_rad": 0.0},
+  "memory": {
+    "last_seen": {"x": 10, "y": 8},
+    "turns_since_los": 0,
+    "trail": [{"x": 5, "y": 8}, {"x": 6, "y": 8}, {"x": 7, "y": 8}],
+    "player_trail": [
+      {"x": 8, "y": 8},
+      {"x": 9, "y": 8},
+      {"x": 10, "y": 8}
+    ]
+  },
+  "other_monsters": []
+}

@@ -1,17 +1,18 @@
 package model
 
 type GameRules struct {
-	Id                     RulesId
-	MaxDungeonCount        int // Number of dungeons to complete the game
-	DungeonWidth           int
-	DungeonHeight          int
-	MaxHorizontalRoomCount int                   // Max number of rooms in horizontal
-	MaxVerticalRoomCount   int                   // Max number of rooms in vertical
-	ActorsConf             map[ActorLabel]*Actor // Actors configuration
-	ItemsConf              map[ItemLabel]*Item   // Items configuration
-	DiffCurve              *DifficultyCurve
-	HpRestore              float64 // Percent of max health that will restore player's HP
-	TimeForMove            int     // Time for move in seconds
+	Id                      RulesId
+	MaxDungeonCount         int // Number of dungeons to complete the game
+	DungeonWidth            int
+	DungeonHeight           int
+	MaxHorizontalRoomCount  int                   // Max number of rooms in horizontal
+	MaxVerticalRoomCount    int                   // Max number of rooms in vertical
+	ExtraDungeonConnections int                   // Additional random inter-room corridors beyond the spanning tree
+	ActorsConf              map[ActorLabel]*Actor // Actors configuration
+	ItemsConf               map[ItemLabel]*Item   // Items configuration
+	DiffCurve               *DifficultyCurve
+	HpRestore               float64 // Percent of max health that will restore player's HP
+	TimeForMove             int     // Time for move in seconds
 }
 
 type RulesId int
@@ -103,17 +104,18 @@ func interpolateWeights[T comparable](start, end map[T]int, step float64) map[T]
 
 func NewDefaultGameRules() *GameRules {
 	return &GameRules{
-		Id:                     0,
-		MaxDungeonCount:        21,
-		DungeonWidth:           80,
-		DungeonHeight:          24,
-		MaxHorizontalRoomCount: 3,
-		MaxVerticalRoomCount:   3,
-		ActorsConf:             createDefaultActorsConf(),
-		ItemsConf:              createDefaultItemsConf(),
-		DiffCurve:              createDefaultDiffCurve(),
-		HpRestore:              0.25,
-		TimeForMove:            0,
+		Id:                      0,
+		MaxDungeonCount:         21,
+		DungeonWidth:            80,
+		DungeonHeight:           24,
+		MaxHorizontalRoomCount:  4,
+		MaxVerticalRoomCount:    4,
+		ExtraDungeonConnections: 2,
+		ActorsConf:              createDefaultActorsConf(),
+		ItemsConf:               createDefaultItemsConf(),
+		DiffCurve:               createDefaultDiffCurve(),
+		HpRestore:               0.25,
+		TimeForMove:             0,
 	}
 }
 

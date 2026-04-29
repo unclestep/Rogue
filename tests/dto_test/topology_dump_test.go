@@ -19,7 +19,7 @@ func TestToTopologyDumpMatchesGeneratedMap(t *testing.T) {
 	play := model.NewPlaythrough("dump-test", 1, seed)
 	play.Map = &model.Map{}
 	ctx := model.NewSessionContext(play)
-	service.NewTopologyGenerator().Gen(ctx, 80, 24, 3, 3)
+	service.NewTopologyGenerator().Gen(ctx, 80, 24, 3, 3, 0)
 
 	if ctx.Playthrough.Map == nil {
 		t.Fatalf("topology generator produced nil map for seed=%d", seed)
@@ -105,7 +105,7 @@ func TestToTopologyDumpDeterministicAcrossSeeds(t *testing.T) {
 		play := model.NewPlaythrough("det", 1, seed)
 		play.Map = &model.Map{}
 		ctx := model.NewSessionContext(play)
-		service.NewTopologyGenerator().Gen(ctx, 80, 24, 3, 3)
+		service.NewTopologyGenerator().Gen(ctx, 80, 24, 3, 3, 0)
 
 		blob, err := json.Marshal(dto.ToTopologyDump(ctx.Playthrough.Map))
 		if err != nil {

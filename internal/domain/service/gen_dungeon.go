@@ -29,7 +29,7 @@ func (d *DungeonGenerator) Gen(ctx *model.SessionContext) {
 	ctx.Playthrough.DungParams = genParams
 	ctx.Playthrough.Map = nil
 
-	d.topologyGenerator.Gen(ctx, d.rules.DungeonWidth, d.rules.DungeonHeight, d.rules.MaxHorizontalRoomCount, d.rules.MaxVerticalRoomCount)
+	d.topologyGenerator.Gen(ctx, d.rules.DungeonWidth, d.rules.DungeonHeight, d.rules.MaxHorizontalRoomCount, d.rules.MaxVerticalRoomCount, d.rules.ExtraDungeonConnections)
 
 	if ctx.Playthrough.Depth >= genParams.LockedDoorsStartDepth {
 		doorCount := genParams.MinLockedDoors + ctx.Rng().Intn(genParams.MaxLockedDoors-genParams.MinLockedDoors+1)

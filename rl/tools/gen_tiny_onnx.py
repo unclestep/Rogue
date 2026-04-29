@@ -2,10 +2,9 @@
 """
 Generate a minimal ONNX model for the Pursuer integration test.
 
-The model has the same input/output contract as the real trained policy
-produced by PR 4 (rl/pursuer_training.ipynb):
+The model has the same input/output contract as the real trained policy:
 
-    input  : float32 [1, 859]   (named "input")
+    input  : float32 [1, 1714]  (named "input")
     output : float32 [1, 5]     (named "logits")
 
 It is deliberately trivial — a single Gemm with zero weights and a biased
@@ -30,7 +29,7 @@ import numpy as np
 import onnx
 from onnx import TensorProto, helper, numpy_helper
 
-OBS_SIZE = 1101  # 9 channels × 11×11 + 12 scalars
+OBS_SIZE = 1714  # 14 channels x 11x11 + 20 scalars
 ACTION_COUNT = 5
 
 # Bias chosen so that argmax(logits) == 0 (ActionUp) — lets the test assert

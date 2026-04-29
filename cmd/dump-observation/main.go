@@ -51,6 +51,7 @@ type memorySpec struct {
 	LastSeen      point   `json:"last_seen"`
 	TurnsSinceLOS int     `json:"turns_since_los"`
 	Trail         []point `json:"trail"`
+	PlayerTrail   []point `json:"player_trail"`
 }
 
 type scenario struct {
@@ -157,6 +158,9 @@ func buildMemory(spec memorySpec) *service.PursuerMemory {
 	mem.TurnsSinceLOS = spec.TurnsSinceLOS
 	for _, p := range spec.Trail {
 		mem.Trail = append(mem.Trail, geometry.Point{X: p.X, Y: p.Y})
+	}
+	for _, p := range spec.PlayerTrail {
+		mem.PlayerTrail = append(mem.PlayerTrail, geometry.Point{X: p.X, Y: p.Y})
 	}
 	return mem
 }

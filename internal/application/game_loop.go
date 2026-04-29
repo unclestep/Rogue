@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"log"
 	"sync"
 	"time"
 
@@ -103,6 +104,10 @@ func (g *GameLoop) notifyPlayer(playerUUID string, view dto.GameView) {
 
 func (g *GameLoop) broadcastState(playId model.PlaythroughId) {
 	snapshots := g.viewMapper.MakeSnapshots(playId)
+	if snapshots == nil {
+		log.Printf("[WARN] broadcastState: no snapshots for playthrough %v (repo missing or mapper failed)", playId)
+		return
+	}
 
 	g.mu.RLock()
 	defer g.mu.RUnlock()

@@ -12,7 +12,7 @@ func createMoveEnv() (*model.SessionContext, *service.Movement, *model.Actor) {
 	play := model.NewPlaythrough("", 0, 1)
 	ctx := model.NewSessionContext(play)
 	topGen := service.NewTopologyGenerator()
-	topGen.Gen(ctx, 80, 24, 3, 3)
+	topGen.Gen(ctx, 80, 24, 3, 3, 0)
 
 	impactResolver := service.NewImpactResolverService()
 	pickup := service.NewPickupService()

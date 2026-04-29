@@ -26,10 +26,17 @@ import pytest
 
 from rl.pursuer_env import (
     OBSERVATION_SIZE,
+    TILE_CORRIDOR,
     PursuerMemory,
     Topology,
     build_observation,
+    chase_scent_map,
+    compute_intercept_stats,
+    covert_path_map,
     flashlight_mask,
+    intercept_path_map,
+    predict_player_path,
+    visited_corridor_path_map,
 )
 
 
@@ -110,14 +117,30 @@ def _python_observation(scenario_path: Path) -> np.ndarray:
     for p in mem_spec.get("trail", []):
         memory.push_trail((p["x"], p["y"]))
 
+    player_trail: list[tuple[int, int]] = [
+        (p["x"], p["y"]) for p in mem_spec.get("player_trail", [])
+    ]
+
     others = scenario.get("other_monsters") or []
     other_pos = (others[0]["x"], others[0]["y"]) if others else None
 
-    from rl.pursuer_env import chase_scent_map
-
     scent_map = None
+    intercept_stats = None
+    is_corridor = 0.0
+    intercept_map = None
+    future_path: list[tuple[int, int]] = []
+    covert = covert_path_map(topology, pursuer_pos, cone)
+    visited_map = visited_corridor_path_map(topology, pursuer_pos, player_trail)
     if player_pos:
         scent_map = chase_scent_map(topology, player_pos)
+        exit_scent = chase_scent_map(topology, topology.exit_point)
+        intercept_stats = compute_intercept_stats(
+            exit_scent, scent_map, pursuer_pos, player_pos
+        )
+        intercept_map = intercept_path_map(topology, exit_scent, scent_map, player_pos)
+        future_path = predict_player_path(topology, player_pos, exit_scent)
+        if topology.tiles[player_pos[1], player_pos[0]] == TILE_CORRIDOR:
+            is_corridor = 1.0
 
     return build_observation(
         topology=topology,
@@ -130,6 +153,13 @@ def _python_observation(scenario_path: Path) -> np.ndarray:
         cone_mask=cone,
         other_pursuer_pos=other_pos,
         scent_map=scent_map,
+        covert_map=covert,
+        player_trail=player_trail,
+        intercept_stats=intercept_stats,
+        is_corridor=is_corridor,
+        intercept_map=intercept_map,
+        visited_corridor_map=visited_map,
+        future_player_path=future_path if future_path else None,
     )
 
 

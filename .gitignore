@@ -41,8 +41,12 @@ build
 /package-lock.json
 /package.json
 
-# RL training artifacts (generated, not versioned)
-/rl/topologies/*.json
+# /rl/topologies/*.json
+# /rl/fixtures/topologies/*.json
+# /rl/fixtures/topologies_small/*.json
+# /rl/fixtures/topologies_medium/*.json
+# !/rl/fixtures/parity/
+# !/rl/fixtures/parity/**
 /rl/runs/
 /rl/checkpoints/
 __pycache__/
@@ -50,3 +54,10 @@ __pycache__/
 
 checkpoints
 __pycache__
+.pytest_cache
+.pylocal/
+.claude/
+.obsidian/
+CLAUDE.md
+
+wiki

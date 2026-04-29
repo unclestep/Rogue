@@ -9,9 +9,13 @@ import (
 
 // FlashlightHalfFOV is the default half-cone angle in degrees.
 // FlashlightRange is the default visibility radius in grid cells.
+// PR #B: shortened globally from 15 → 3. Rationale: stealth-horror feel
+// (monster can close distance under shadow) and ambush geometry (agent can
+// hide in room corners instead of being seen across entire rooms). Applied
+// to both gameplay and RL training env (rl/pursuer_env.py).
 const (
 	FlashlightHalfFOV = 45
-	FlashlightRange   = 15.0
+	FlashlightRange   = 3.0
 )
 
 // Raycaster handles field-of-view calculations using camera-plane DDA raycasting.

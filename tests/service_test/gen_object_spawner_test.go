@@ -14,7 +14,7 @@ func setupSpawnerEnv(seed int64) (*model.SessionContext, *service.ObjectSpawner)
 	ctx := createTestContext(seed)
 
 	tg := service.NewTopologyGenerator()
-	tg.Gen(ctx, 80, 24, 3, 3)
+	tg.Gen(ctx, 80, 24, 3, 3, 0)
 	ctx.Playthrough.DungParams = &model.DungParams{TreasureValueMultiplier: 1.0}
 
 	rules := &model.GameRules{

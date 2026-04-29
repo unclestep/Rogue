@@ -130,7 +130,7 @@ func TestDoorLockerLockDoors(t *testing.T) {
 
 	setupLockerEnv := func(seed int64, w, h int) *model.SessionContext {
 		ctx := createTestContext(seed)
-		tg.Gen(ctx, 80, 24, w, h)
+		tg.Gen(ctx, 80, 24, w, h, 0)
 		return ctx
 	}
 

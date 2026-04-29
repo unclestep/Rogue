@@ -28,8 +28,9 @@ func main() {
 	outDir := flag.String("out", "rl/topologies", "output directory for JSON files")
 	mapW := flag.Int("width", 80, "map width in tiles")
 	mapH := flag.Int("height", 24, "map height in tiles")
-	roomCols := flag.Int("rooms-h", 3, "number of room columns (horizontal grid)")
-	roomRows := flag.Int("rooms-v", 3, "number of room rows (vertical grid)")
+	roomCols := flag.Int("rooms-h", 4, "number of room columns (horizontal grid)")
+	roomRows := flag.Int("rooms-v", 4, "number of room rows (vertical grid)")
+	extraConn := flag.Int("extra-connections", 2, "random inter-room corridors beyond the spanning tree")
 	flag.Parse()
 
 	if *count <= 0 {
@@ -47,7 +48,7 @@ func main() {
 		play.Map = &model.Map{}
 		ctx := model.NewSessionContext(play)
 
-		tg.Gen(ctx, *mapW, *mapH, *roomCols, *roomRows)
+		tg.Gen(ctx, *mapW, *mapH, *roomCols, *roomRows, *extraConn)
 		if ctx.Playthrough.Map == nil {
 			fatal("generation returned nil map at index %d (seed=%d)", i, s)
 		}

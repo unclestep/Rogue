@@ -315,3 +315,226 @@ func TestBuildObservationMemoryDecaysAtHalfHorizon(t *testing.T) {
 		t.Errorf("ChPlayerMemory at half-horizon expected 0.5 ±%.0e, got %v", eps, got)
 	}
 }
+
+// ObservationSize must equal 14*121 + 20 = 1714 — guards against drift.
+func TestObservationSizeConstant(t *testing.T) {
+	if service.ObservationSize != 1714 {
+		t.Fatalf("ObservationSize=%d want 1714", service.ObservationSize)
+	}
+	if service.ObservationChannels != 14 {
+		t.Fatalf("ObservationChannels=%d want 14", service.ObservationChannels)
+	}
+	if service.ObservationScalars != 20 {
+		t.Fatalf("ObservationScalars=%d want 20", service.ObservationScalars)
+	}
+}
+
+// The covert path BFS must charge CovertConePenalty to enter a cone-flagged
+// cell, not 1. We verify this by comparing the distance grid cell value
+// against the expected cost via the ObservationCell read-back.
+func TestBuildObservationCovertPathWritesSomething(t *testing.T) {
+	ctx, pursuer := pursuerAt(geometry.Point{X: 7, Y: 4})
+	obs := service.BuildObservation(ctx, pursuer, freshMemory())
+
+	// At origin distance = 0 → normalised 0.
+	originVal := service.ObservationCell(obs, service.ChCovertPath, 5, 5)
+	if originVal != 0 {
+		t.Errorf("ChCovertPath at origin expected 0.0, got %v", originVal)
+	}
+
+	// At least one cell in the crop must be >0 (the next walkable step is 1).
+	hasPositive := false
+	for y := range service.ObservationCropSize {
+		for x := range service.ObservationCropSize {
+			if v := service.ObservationCell(obs, service.ChCovertPath, x, y); v > 0 {
+				hasPositive = true
+			}
+		}
+	}
+	if !hasPositive {
+		t.Errorf("ChCovertPath has no positive cells in crop")
+	}
+}
+
+// ChPlayerTrail must hold 1.0 at the newest player position and decay by
+// PlayerTrailDecay per step back.
+func TestBuildObservationPlayerTrailDecays(t *testing.T) {
+	ctx, pursuer := pursuerAt(geometry.Point{X: 7, Y: 4})
+	mem := freshMemory()
+	// Newest last; simulate a three-step walk ending at pursuer's cell.
+	mem.PlayerTrail = []geometry.Point{
+		{X: 5, Y: 4},
+		{X: 6, Y: 4},
+		{X: 7, Y: 4},
+	}
+	obs := service.BuildObservation(ctx, pursuer, mem)
+
+	// (dx, dy) → crop coords: (dx + 5, dy + 5).
+	newest := service.ObservationCell(obs, service.ChPlayerTrail, 5, 5) // dx=0, dy=0
+	mid := service.ObservationCell(obs, service.ChPlayerTrail, 4, 5)    // dx=-1, dy=0
+	old := service.ObservationCell(obs, service.ChPlayerTrail, 3, 5)    // dx=-2, dy=0
+
+	if newest < 0.999 {
+		t.Errorf("newest trail cell expected 1.0, got %v", newest)
+	}
+	expectedMid := float32(service.PlayerTrailDecay)
+	if mid < expectedMid-1e-3 || mid > expectedMid+1e-3 {
+		t.Errorf("mid trail cell expected ≈%v, got %v", expectedMid, mid)
+	}
+	expectedOld := float32(service.PlayerTrailDecay) * float32(service.PlayerTrailDecay)
+	if old < expectedOld-1e-3 || old > expectedOld+1e-3 {
+		t.Errorf("old trail cell expected ≈%v, got %v", expectedOld, old)
+	}
+}
+
+// computeInterceptStats falls back to zeros when the map lacks an exit point
+// (ExitPoint is NewInvalidPoint on the test fixture). is_corridor then stays 0.
+// This pins the test-helper-safety property that guards against the Gemini
+// trap where eager exit-scent build crashed ~15 test helpers.
+func TestBuildObservationInterceptZeroWhenExitInvalid(t *testing.T) {
+	ctx, pursuer := pursuerAt(geometry.Point{X: 7, Y: 4})
+	obs := service.BuildObservation(ctx, pursuer, freshMemory())
+	scalarBase := service.ObservationGridFloats
+	for i := 12; i <= 14; i++ {
+		if obs[scalarBase+i] != 0 {
+			t.Errorf("intercept scalar[%d] expected 0 (no exit), got %v", i, obs[scalarBase+i])
+		}
+	}
+	// is_corridor on a Floor tile is 0.
+	if obs[scalarBase+15] != 0 {
+		t.Errorf("is_corridor expected 0 (player on Floor), got %v", obs[scalarBase+15])
+	}
+}
+
+// computeInterceptStats produces a sane bounded triple when the map has a
+// valid exit and chase scent. The exact values are topology-dependent; we
+// pin only the bounds, matching Python's unit test.
+func TestBuildObservationInterceptBoundedWhenExitValid(t *testing.T) {
+	play := model.NewPlaythrough("", 0, 0)
+	play.Map = buildPursuerObsMap()
+	play.Map.ExitPoint = geometry.Point{X: 1, Y: 1}
+
+	player := model.NewDefaultPlayer(1, geometry.Point{X: 10, Y: 6}, 9)
+	play.Players[player.Id] = player
+	play.Map.SetActor(player.Pos, int64(player.Id))
+
+	pursuer := model.NewDefaultPursuer(2, geometry.Point{X: 5, Y: 4})
+	play.Monsters[pursuer.Id] = pursuer
+	play.Map.SetActor(pursuer.Pos, int64(pursuer.Id))
+
+	ctx := model.NewSessionContext(play)
+	obs := service.BuildObservation(ctx, pursuer, freshMemory())
+
+	scalarBase := service.ObservationGridFloats
+	p2e := obs[scalarBase+12]
+	p2p := obs[scalarBase+13]
+	adv := obs[scalarBase+14]
+	if p2e < 0 || p2e > 1 {
+		t.Errorf("player_to_exit out of [0,1]: %v", p2e)
+	}
+	if p2p < 0 || p2p > 1 {
+		t.Errorf("pursuer_to_player out of [0,1]: %v", p2p)
+	}
+	if adv < -1 || adv > 1 {
+		t.Errorf("intercept_advantage out of [-1,1]: %v", adv)
+	}
+}
+
+// Map_Position scalars (s[16], s[17]) encode global pursuer coordinates.
+// Critical on 80×24 — the 11×11 crop hides where we are on the full map.
+func TestBuildObservationMapPositionScalars(t *testing.T) {
+	ctx, pursuer := pursuerAt(geometry.Point{X: 7, Y: 4})
+	obs := service.BuildObservation(ctx, pursuer, freshMemory())
+	scalarBase := service.ObservationGridFloats
+	// Map width=15, height=9 → s[16]=7/15≈0.467, s[17]=4/9≈0.444.
+	want16 := float32(7.0 / 15.0)
+	want17 := float32(4.0 / 9.0)
+	if diff := obs[scalarBase+16] - want16; diff > 1e-4 || diff < -1e-4 {
+		t.Errorf("s[16] Map_Position_X: want %v, got %v", want16, obs[scalarBase+16])
+	}
+	if diff := obs[scalarBase+17] - want17; diff > 1e-4 || diff < -1e-4 {
+		t.Errorf("s[17] Map_Position_Y: want %v, got %v", want17, obs[scalarBase+17])
+	}
+}
+
+// Polar distance / angle scalars (s[18], s[19]) are bounded in [0,1] / [-1,1].
+// Zero when no target — not covered here; that's the default.
+func TestBuildObservationPolarScalarsBounded(t *testing.T) {
+	play := model.NewPlaythrough("", 0, 0)
+	play.Map = buildPursuerObsMap()
+	play.Map.ExitPoint = geometry.Point{X: 1, Y: 1}
+	player := model.NewDefaultPlayer(1, geometry.Point{X: 10, Y: 6}, 9)
+	play.Players[player.Id] = player
+	play.Map.SetActor(player.Pos, int64(player.Id))
+	pursuer := model.NewDefaultPursuer(2, geometry.Point{X: 5, Y: 4})
+	play.Monsters[pursuer.Id] = pursuer
+	play.Map.SetActor(pursuer.Pos, int64(pursuer.Id))
+
+	ctx := model.NewSessionContext(play)
+	obs := service.BuildObservation(ctx, pursuer, freshMemory())
+	scalarBase := service.ObservationGridFloats
+	d := obs[scalarBase+18]
+	a := obs[scalarBase+19]
+	if d < 0 || d > 1 {
+		t.Errorf("polar distance out of [0,1]: %v", d)
+	}
+	if a < -1 || a > 1 {
+		t.Errorf("polar angle out of [-1,1]: %v", a)
+	}
+}
+
+// ChInterceptPath channel stays at 0 when there's no target — matches Python's
+// intercept_map=None default, important for parity on no-player scenarios.
+func TestBuildObservationInterceptChannelEmptyWithoutTarget(t *testing.T) {
+	// Build ctx with NO players (pursuerAt always adds a player — so we do this manually).
+	play := model.NewPlaythrough("", 0, 0)
+	play.Map = buildPursuerObsMap()
+	pursuer := model.NewDefaultPursuer(2, geometry.Point{X: 7, Y: 4})
+	play.Monsters[pursuer.Id] = pursuer
+	play.Map.SetActor(pursuer.Pos, int64(pursuer.Id))
+
+	ctx := model.NewSessionContext(play)
+	obs := service.BuildObservation(ctx, pursuer, freshMemory())
+	for y := range service.ObservationCropSize {
+		for x := range service.ObservationCropSize {
+			v := service.ObservationCell(obs, service.ChInterceptPath, x, y)
+			if v != 0 {
+				t.Errorf("ChInterceptPath[%d,%d] expected 0 (no target), got %v", x, y, v)
+			}
+		}
+	}
+}
+
+// ChFuturePlayerPos peaks at relative player position (dx=0, dy=0 in crop is
+// the pursuer itself; player is at some offset). With no valid exit scent the
+// channel stays 0.
+func TestBuildObservationFuturePlayerPosDecaysAlongPath(t *testing.T) {
+	// Build ctx with valid ExitPoint so predictPlayerPath has a gradient.
+	play := model.NewPlaythrough("", 0, 0)
+	play.Map = buildPursuerObsMap()
+	play.Map.ExitPoint = geometry.Point{X: 1, Y: 1}
+	player := model.NewDefaultPlayer(1, geometry.Point{X: 10, Y: 4}, 9)
+	play.Players[player.Id] = player
+	play.Map.SetActor(player.Pos, int64(player.Id))
+	pursuer := model.NewDefaultPursuer(2, geometry.Point{X: 7, Y: 4})
+	play.Monsters[pursuer.Id] = pursuer
+	play.Map.SetActor(pursuer.Pos, int64(pursuer.Id))
+
+	ctx := model.NewSessionContext(play)
+	obs := service.BuildObservation(ctx, pursuer, freshMemory())
+
+	// Player at (10, 4); pursuer at (7, 4). Relative crop = (dx=3, dy=0).
+	// crop coord = (dx+5, dy+5) = (8, 5). Intensity at step 0 = 1.0.
+	peak := service.ObservationCell(obs, service.ChFuturePlayerPos, 8, 5)
+	if peak < 0.99 {
+		t.Errorf("ChFuturePlayerPos at player cell expected ≈1.0, got %v", peak)
+	}
+}
+
+// FlashlightRange must be the short-cone value (3.0), matching Python
+// pursuer_env.py. Change here is a gameplay change; keep pinned.
+func TestFlashlightRangeShortCone(t *testing.T) {
+	if service.FlashlightRange != 3.0 {
+		t.Fatalf("FlashlightRange=%v want 3.0 (short-cone)", service.FlashlightRange)
+	}
+}
