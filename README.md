@@ -62,8 +62,6 @@ rl/               Python QR-DQN training pipeline
 tests/            black-box tests by layer
 ```
 
-See `wiki/architecture.md` for the full architecture reference.
-
 ## Go <-> Python parity
 
 `BuildObservation` (Go) and `PursuerEnv._observe` (Python) must produce byte-identical tensors.
